@@ -20,6 +20,9 @@ import { StaffManager } from './features/admin/StaffManager';
 import { ShiftManager } from './features/admin/ShiftManager';
 import { SettingsView } from './features/admin/SettingsView';
 import { PlatformAdmin } from './features/platform/PlatformAdmin';
+import { BarcodeScanView } from './features/scan/BarcodeScanView';
+import { SCAN_BARCODE_ROLES } from './lib/access';
+import type { Role } from './types';
 
 const ProtectedLayout: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -47,6 +50,21 @@ const ProtectedLayout: React.FC = () => {
   );
 };
 
+const RequireRoles: React.FC<{ roles: readonly Role[]; children: React.ReactNode }> = ({ roles, children }) => {
+  const { user } = useAuth();
+
+  if (!user || !roles.includes(user.role)) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+        <h1 className="text-lg font-bold text-[#0F172A]">You don't have access to this page</h1>
+        <p className="text-sm text-[#64748B]">Ask an administrator if you need access.</p>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+};
+
 export const App: React.FC = () => {
   return (
     <AuthProvider>
@@ -68,6 +86,9 @@ export const App: React.FC = () => {
             {/* Floor Assistant & Price Checker */}
             <Route path="/assistant" element={<FloorAssistantView />} />
             <Route path="/waiter" element={<Navigate to="/assistant" replace />} />
+
+            {/* Barcode lookup (camera, USB scanner or typed code) */}
+            <Route path="/scan" element={<RequireRoles roles={SCAN_BARCODE_ROLES}><BarcodeScanView /></RequireRoles>} />
 
             {/* Standalone Registers view */}
             <Route path="/registers" element={<RegisterManager />} />

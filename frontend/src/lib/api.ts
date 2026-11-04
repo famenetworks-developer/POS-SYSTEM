@@ -16,9 +16,40 @@ export class ApiError extends Error {
   }
 }
 
+// Access tokens expire after 15 minutes. Refresh tokens are single-use (the server
+// rotates them), so concurrent 401s share one in-flight refresh.
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshAccessToken(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = (async () => {
+      const refreshToken = localStorage.getItem('restoflow_refresh_token');
+      if (!refreshToken) return false;
+      try {
+        const response = await fetch(`${API_BASE}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        const data = await response.json().catch(() => null);
+        if (!response.ok || !data?.data?.access_token) return false;
+        localStorage.setItem('restoflow_token', data.data.access_token);
+        localStorage.setItem('restoflow_refresh_token', data.data.refresh_token);
+        return true;
+      } catch {
+        return false;
+      }
+    })().finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
 export async function apiRequest<T = any>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  isRetry = false
 ): Promise<T> {
   const token = localStorage.getItem('restoflow_token');
   const headers = new Headers(options.headers || {});
@@ -43,6 +74,11 @@ export async function apiRequest<T = any>(
 
     if (!response.ok) {
       const err = data?.error || {};
+      if (response.status === 401 && err.code === 'INVALID_TOKEN' && token && !isRetry && !path.startsWith('/auth/')) {
+        if (await refreshAccessToken()) {
+          return apiRequest<T>(path, options, true);
+        }
+      }
       throw new ApiError(err.message || response.statusText, err.code || 'HTTP_ERROR', err.details);
     }
 

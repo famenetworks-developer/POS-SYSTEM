@@ -11,3 +11,5 @@ backend/api.exe
 coverage
 responsive-shots
 login-check
+deploy/local-https
+docker-compose.override.yml

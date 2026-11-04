@@ -1,4 +1,4 @@
-# RestoFlow POS - Production Operations Runbook
+# NovaMart POS - Production Operations Runbook
 
 ## 1. System Overview
 - **Backend:** Go 1.22+ API & WebSocket Server (`cmd/api/main.go`) on port `8080`
@@ -40,7 +40,7 @@ docker compose start api worker
 ## 3. Secret Rotation Procedures
 
 ### 3.1 JWT Secret Rotation
-RestoFlow uses dual secret rotation:
+NovaMart uses separate access-token and refresh-token secrets:
 1. Generate new 256-bit keys:
    ```bash
    openssl rand -hex 32
@@ -50,7 +50,7 @@ RestoFlow uses dual secret rotation:
    ```bash
    docker compose up -d --no-deps api
    ```
-4. User sessions will automatically renegotiate via refresh token rotation without logging out active cashiers.
+4. Existing access and refresh tokens become invalid after rotation. Plan a maintenance window and require users to sign in again.
 
 ---
 
@@ -64,7 +64,7 @@ docker compose up -d --scale api=4
 ```
 
 ### 4.2 Background Worker Scaling
-Workers run scheduled cron jobs (low-stock alerts, daily snapshots, trial expirations). When Redis is configured, workers operate as an Asynq worker pool pulling from Redis queues.
+The bundled worker runs hourly PostgreSQL maintenance jobs (subscription status and low-stock audits). Run a single worker instance unless distributed job locking is added. Redis is provisioned for future queue/cache integration but is not currently used by the Go services.
 
 ---
 

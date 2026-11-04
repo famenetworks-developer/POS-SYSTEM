@@ -10,7 +10,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("[Worker] Invalid configuration: %v", err)
+	}
 	log.Printf("[Worker] Starting RestoFlow background worker...")
 
 	db, err := platform.NewDB(cfg.DatabaseURL)

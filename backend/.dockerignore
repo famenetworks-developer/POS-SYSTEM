@@ -1,0 +1,6 @@
+.env
+.runlogs
+*.log
+api.exe
+*.test
+coverage

@@ -1,120 +1,128 @@
-# NovaMart Super Shop POS & Retail Management System 🛒⚡
-> **Premium Multi-Branch Supermarket, Grocery Store POS & FMCG Inventory Management Platform**  
-> *Tagline: Everyday essentials, intelligently managed*
+# NovaMart Super Shop POS
 
-NovaMart is a high-performance, production-quality Super Shop POS and Retail Management System engineered specifically for supermarkets, grocery stores, convenience chains, and department stores in Bangladesh.
+Multi-branch supermarket POS and retail management platform built with Go, PostgreSQL, React, TypeScript, Vite, and Nginx.
 
-Built with **Go Chi + PostgreSQL 17 + Redis + React 19 + TypeScript + Vite + Tailwind CSS**, it features deterministic integer minor units (poisha), instant laser barcode scanning, 26 grocery departments, decimal scale integration for weighted produce, promotional coupon discounts, 80mm fiscal receipts, and multi-branch inventory valuation.
+## Features
 
----
+- Fast barcode-based checkout, weighted products, coupons, split tender, hold/resume carts
+- Fulfillment picking and dispatch workflow
+- Mobile aisle assistant and price checker
+- Product, inventory, sales, customer, supplier, staff, shift, and reporting administration
+- Integer minor-unit money calculations (1 BDT = 100 poisha)
+- PostgreSQL-backed multi-tenant data and automatic versioned migrations
+- WebSocket updates and offline browser storage
 
-## 🏛️ System Architecture
+## Requirements
 
-```text
-[ React 19 + Vite Super Shop POS (Cashier / Floor Assistant / Fulfillment / Back Office) ]
-        | HTTPS REST (JSON)         | WebSocket (ws://)
-        v                           v
-[ Nginx Reverse Proxy / TLS ]
-        |
-[ Go 1.22+ API Monolith ] <---> [ WebSocket Hub (Rooms: store:{id}, branch:{id}) ]
-        |                              |
-        +---> [ PostgreSQL 17+ ] <-----+
-        |
-[ Background Sync & Audit Workers ]
+### Docker deployment
+
+- Docker Engine / Docker Desktop with Compose
+
+### Local development
+
+- Go 1.26+
+- Node.js 20.19+ or 22.12+
+- PostgreSQL 15+
+
+## Environment setup
+
+The real `.env` is intentionally ignored by Git.
+
+1. Copy `.env.example` to `.env`.
+2. Replace `POSTGRES_PASSWORD`, `COMPOSE_DATABASE_URL`, `JWT_ACCESS_SECRET`, and `JWT_REFRESH_SECRET`.
+3. Set `CORS_ORIGINS` to the public site URL (or a comma-separated list of trusted URLs).
+4. Keep the password embedded in `COMPOSE_DATABASE_URL` URL-safe, or percent-encode reserved characters.
+
+Generate separate JWT secrets with a cryptographically secure generator, for example:
+
+```bash
+openssl rand -hex 32
+openssl rand -hex 32
 ```
 
----
+Never commit `.env` or use the example placeholder secrets in production.
 
-## 🌟 Core Super Shop Features
+## Run the complete stack with Docker
 
-1. **High-Speed Cashier Checkout Terminal (`/pos`)**:
-   - Rapid laser barcode scanning with instant cart insertion.
-   - 26 large grocery departments inspired by standard supermarket catalogues (Fresh Produce, Dairy & Eggs, Meat & Fish, Rice, Atta & Grains, Edible Oils, Spices, Beverages, Personal Care, Baby Care, Household, etc.).
-   - Quick filters: **Hot Deals**, **Popular Products**, **New Arrivals**, and **Weighted Goods**.
-   - Decimal scale modal for weighed produce (e.g. `1.250 kg` Fuji Apples with live price preview).
-   - Fast cash denomination buttons (৳50, ৳100, ৳500, ৳1000) with instant change calculation.
-   - Digital payments: bKash, Nagad, Visa / Mastercard, and Split Tender.
-   - Promotional coupon engine (e.g., `NOVAFIRST` for 10% off, `WEEKEND200` for ৳200 flat discount).
-   - Hold & Resume multi-cart transactions for cashiers when shoppers step away.
-
-2. **Order Fulfillment & Picking Station (`/fulfillment`)**:
-   - Picking lists with aisle/shelf locations (e.g. `Aisle 3, Rack B`).
-   - Order pipeline: New -> Picking -> Packed & Ready -> Dispatched / Delivered.
-   - Audible web-audio chime notifications for incoming orders.
-
-3. **Aisle Assistant & Mobile Price Checker (`/assistant`)**:
-   - Handheld floor mobile terminal for staff.
-   - Scan any barcode to look up retail price, promotional discount, on-hand shelf stock, and aisle coordinates.
-
-4. **Back Office Management Suite (`/admin`)**:
-   - **Executive Dashboard**: Daily sales, gross margins, payment mix, 7-day revenue trend, and top-selling SKUs.
-   - **Products & Catalogue (`/admin/products`)**: Add/edit retail products, package sizes, brands, regular MRP vs sale prices, margins, and printable shelf barcode labels.
-   - **Registers & Counters (`/admin/registers`)**: Manage checkout lanes, counter types (Express, Trolley POS, Self-checkout), and active lane statuses.
-   - **Inventory & Stock Valuation (`/admin/inventory`)**: FIFO stock ledger, low-stock reorder warnings, and stock adjustment logging (damage, spoilage/expiry, recount).
-   - **Sales & Invoices (`/admin/sales`)**: Full invoice history, 80mm thermal receipt reprints, and returns/refunds with restock.
-   - **Customers & Loyalty (`/admin/customers`)**: NovaClub membership tiers (Regular, Silver, Gold, VIP) and points cash redemption.
-   - **Suppliers & Purchases (`/admin/suppliers`)**: FMCG vendor records (Meghna Group, City Group, Square, PRAN, Aarong, Unilever) and payment terms.
-   - **Financial Reports (`/admin/reports`)**: Automated P&L statements, 5% Super Shop VAT accounting, and cashier exception logs.
-   - **Staff & Roles (`/admin/staff`)**: 8 granular role permissions and cashier discount caps.
-   - **Register Shifts (`/admin/shifts`)**: Shift opening float, expected cash drawer calculation, and cash variance explanations.
-
----
-
-## 🚀 Running the Project
-
-### 1. Database
-PostgreSQL is configured on port `5433` (database `restoflow`):
 ```bash
-# Verify connection or apply retail migrations if needed:
-psql -U postgres -h localhost -p 5433 -d restoflow -f backend/migrations/0002_retail_supershop.up.sql
+docker compose config
+docker compose up -d --build
+docker compose ps
 ```
 
-### 2. Run Backend API Server (Port 8080)
+Open `http://localhost` (or the host/port configured by `WEB_PORT`). The API readiness endpoint is `http://localhost:8080/ready` by default.
+
+On startup, the API connects to PostgreSQL, applies every unapplied `backend/migrations/*.up.sql` migration transactionally, records it in `schema_migrations`, and then seeds demo data when needed. The worker starts only after the API and database are healthy.
+
+To stop the application without deleting its database:
+
 ```bash
+docker compose down
+```
+
+Do not use `docker compose down -v` unless you intentionally want to delete the PostgreSQL and Redis volumes.
+
+## Local development
+
+Configure the local `DATABASE_URL` and `MIGRATIONS_DIR=migrations` in the root `.env`, then run:
+
+```powershell
+# Terminal 1
 cd backend
 go run ./cmd/api
-# Or run compiled binary:
-# .\api.exe
-```
 
-### 3. Run Frontend Web Application (Port 5173)
-```bash
+# Terminal 2
 cd frontend
-npm install
+npm ci
 npm run dev
-# Open in browser: http://localhost:5173
 ```
 
-### 4. Run Automated E2E Verification
+Vite proxies `/api` and `/ws` to `http://localhost:8080`, so the frontend works without hardcoded production hosts. Open `http://localhost:5173` (or the next free Vite port).
+
+## Verification
+
 ```powershell
+cd backend
+go test ./...
+
+cd ..\frontend
+npm run lint
+npm run build
+
+cd ..
 powershell -ExecutionPolicy Bypass -File .\test_e2e.ps1
 ```
 
----
+Health endpoints:
 
-## 🔑 Demo Seed Accounts
+- `GET /health`: API process is running
+- `GET /ready`: API can reach PostgreSQL
 
-| Role | Email | Password | Quick PIN | Access Scope |
-| :--- | :--- | :--- | :--- | :--- |
-| **Super Admin** | `admin@novamart.com` | `admin123` | - | Multi-branch SaaS control, tenants, trials |
-| **Store Owner** | `owner@novamart.com` | `owner123` | `0000` | Full store control, financial P&L, configuration |
-| **Branch Manager** | `manager@novamart.com` | `manager123` | `1111` | Register management, supervisor overrides, returns |
-| **Lead Cashier** | `cashier@novamart.com` | `cashier123` | `2222` | Rapid barcode POS checkout, shifts, payments |
-| **Inventory Head** | `inventory@novamart.com` | `inventory123` | `5555` | Stock valuation, reorder levels, damage adjustments |
-| **Purchase Officer** | `purchase@novamart.com` | `purchase123` | `6666` | FMCG suppliers, purchase orders, vendor payables |
-| **Chief Accountant** | `accountant@novamart.com` | `accountant123` | `7777` | VAT statements, financial reporting, cash audits |
-| **Delivery Associate** | `delivery@novamart.com` | `delivery123` | `8888` | Fulfillment picking station, dispatch status |
+## Demo accounts
 
----
+Demo credentials are for non-production environments only. Change or remove seeded credentials before exposing a production system.
 
-## 🧾 Fiscal Bill Calculation Standard
+They are created only when `SEED_DEMO_DATA=true`; Docker production defaults this setting to `false`.
 
-All calculations strictly use integer minor units (1 BDT = 100 poisha) with zero floating-point imprecision:
-```
-Subtotal = ∑ (Item Base Price × Quantity)
-Order Discount = Min(Subtotal, Coupon Discount + Loyalty Redemption)
-Net Taxable = Subtotal - Order Discount
-VAT (5% Standard Super Shop) = Round(Net Taxable × 0.05)
-Total Invoiced = Net Taxable + VAT
-Change Due = Cash Tendered - Total Invoiced
-```
+| Role | Email | Password | PIN |
+| --- | --- | --- | --- |
+| Super Admin | `admin@novamart.com` | `admin123` | — |
+| Store Owner | `owner@novamart.com` | `owner123` | `0000` |
+| Branch Manager | `manager@novamart.com` | `manager123` | `1111` |
+| Lead Cashier | `cashier@novamart.com` | `cashier123` | `2222` |
+| Inventory Head | `inventory@novamart.com` | `inventory123` | `5555` |
+| Purchase Officer | `purchase@novamart.com` | `purchase123` | `6666` |
+| Chief Accountant | `accountant@novamart.com` | `accountant123` | `7777` |
+| Delivery Associate | `delivery@novamart.com` | `delivery123` | `8888` |
+
+## Production checklist
+
+- Use unique PostgreSQL and JWT secrets and store them in the hosting platform's secret manager.
+- Set `CORS_ORIGINS` to trusted HTTPS origin(s); do not use `*` for public production deployments.
+- Terminate TLS at a reverse proxy or managed load balancer.
+- Change/remove demo accounts and credentials.
+- Back up the PostgreSQL volume and test restores.
+- Run `docker compose config`, tests, lint, and the production build before release.
+- Confirm `/ready`, login, checkout, receipt, inventory adjustment, and CSV export after deployment.
+
+Operational backup and restore guidance is in `docs/runbook.md`.

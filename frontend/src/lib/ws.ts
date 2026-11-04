@@ -2,6 +2,14 @@
 
 type EventCallback = (data: any) => void;
 
+const websocketBaseUrl = () => {
+  const configured = import.meta.env.VITE_WS_URL?.trim();
+  if (configured) return configured.replace(/\/$/, '');
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+};
+
 class RealtimeHub {
   private ws: WebSocket | null = null;
   private listeners: Map<string, Set<EventCallback>> = new Map();
@@ -18,7 +26,7 @@ class RealtimeHub {
       return;
     }
 
-    const wsUrl = `ws://localhost:8080/ws?token=${encodeURIComponent(this.token)}&branch_id=${encodeURIComponent(branchId)}`;
+    const wsUrl = `${websocketBaseUrl()}?token=${encodeURIComponent(this.token)}&branch_id=${encodeURIComponent(branchId)}`;
     try {
       this.ws = new WebSocket(wsUrl);
 

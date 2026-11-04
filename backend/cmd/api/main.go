@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/golang-jwt/jwt/v5"
 	"restoflow/internal/audit"
 	"restoflow/internal/auth"
 	"restoflow/internal/config"
@@ -30,7 +31,10 @@ import (
 )
 
 func main() {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("[Main] Invalid configuration: %v", err)
+	}
 	log.Printf("[Main] Starting RestoFlow API server in %s mode on port %s", cfg.AppEnv, cfg.Port)
 
 	// Connect to Database
@@ -40,13 +44,20 @@ func main() {
 	}
 	defer db.Close()
 
-	// Seed database with rich demo data if empty
-	if err := seed.SeedDatabase(db.Pool); err != nil {
-		log.Printf("[Main] Seed notice: %v", err)
+	if err := platform.ApplyMigrations(context.Background(), db.Pool, cfg.MigrationsDir); err != nil {
+		log.Fatalf("[Main] Failed to apply database migrations: %v", err)
+	}
+
+	// Demo data is enabled by default only in development.
+	if cfg.SeedDemoData {
+		if err := seed.SeedDatabase(db.Pool); err != nil {
+			log.Printf("[Main] Seed notice: %v", err)
+		}
 	}
 
 	// Realtime WebSocket Hub
 	wsHub := platform.NewWSHub()
+	platform.ConfigureWSOrigins(cfg.CorsOrigins)
 	go wsHub.Run()
 
 	// Audit Service
@@ -71,12 +82,13 @@ func main() {
 	r.Use(chimiddleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(chimiddleware.Logger)
+	allowCredentials := len(cfg.CorsOrigins) > 0 && !(len(cfg.CorsOrigins) == 1 && cfg.CorsOrigins[0] == "*")
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"*"},
+		AllowedOrigins:   cfg.CorsOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token", "X-Request-ID", "Idempotency-Key"},
 		ExposedHeaders:   []string{"Link", "X-Request-ID"},
-		AllowCredentials: true,
+		AllowCredentials: allowCredentials,
 		MaxAge:           300,
 	}))
 
@@ -96,18 +108,27 @@ func main() {
 	r.Get("/ws", func(w http.ResponseWriter, req *http.Request) {
 		tokenStr := req.URL.Query().Get("token")
 		branchID := req.URL.Query().Get("branch_id")
-		restaurantID := ""
+		claims := &middleware.UserClaims{}
+		if valid, err := jwtParse(tokenStr, claims, cfg.JWTAccessSecret); err != nil || !valid {
+			middleware.JSONError(w, http.StatusUnauthorized, "INVALID_TOKEN", "Invalid or expired token", nil)
+			return
+		}
 
-		if tokenStr != "" {
-			// Extract claims
-			claims := &middleware.UserClaims{}
-			token, err := jwtParse(tokenStr, claims, cfg.JWTAccessSecret)
-			if err == nil && token {
-				restaurantID = claims.RestaurantID
+		if branchID != "" {
+			var branchAllowed bool
+			err := db.Pool.QueryRow(req.Context(), `
+				SELECT EXISTS (
+					SELECT 1 FROM branches
+					WHERE id::text = $1 AND restaurant_id::text = $2 AND is_active = TRUE
+				)
+			`, branchID, claims.RestaurantID).Scan(&branchAllowed)
+			if err != nil || !branchAllowed {
+				middleware.JSONError(w, http.StatusForbidden, "INVALID_BRANCH", "Branch is not available to this tenant", nil)
+				return
 			}
 		}
 
-		platform.ServeWS(wsHub, w, req, restaurantID, branchID)
+		platform.ServeWS(wsHub, w, req, claims.RestaurantID, branchID)
 	})
 
 	// API v1 Sub-Router
@@ -161,8 +182,14 @@ func main() {
 }
 
 func jwtParse(tokenStr string, claims *middleware.UserClaims, secret string) (bool, error) {
-	parsed, err := middleware.Auth(secret) != nil, error(nil)
-	_ = parsed
-	// Simple validation
-	return true, err
+	if tokenStr == "" {
+		return false, jwt.ErrTokenMalformed
+	}
+	token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(secret), nil
+	})
+	return err == nil && token.Valid, err
 }

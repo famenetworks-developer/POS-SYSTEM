@@ -1,67 +1,99 @@
 services:
   postgres:
-    image: postgres:15-alpine
-    container_name: restoflow-db
+    image: postgres:17-alpine
+    container_name: novamart-db
     environment:
-      POSTGRES_USER: restoflow
-      POSTGRES_PASSWORD: restoflow_secret
-      POSTGRES_DB: restoflow
+      POSTGRES_USER: ${POSTGRES_USER:-restoflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-restoflow}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./backend/migrations/0001_init.up.sql:/docker-entrypoint-initdb.d/0001_init.sql
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U restoflow -d restoflow"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   redis:
     image: redis:7-alpine
-    container_name: restoflow-redis
-    ports:
-      - "6379:6379"
+    container_name: novamart-redis
+    command: redis-server --appendonly yes
     volumes:
       - redisdata:/data
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   api:
+    image: novamart-api:${IMAGE_TAG:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: restoflow-api
+    container_name: novamart-api
     depends_on:
       postgres:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "${API_PORT:-8080}:8080"
     environment:
       APP_ENV: production
-      HTTP_PORT: 8080
-      DATABASE_URL: postgres://restoflow:restoflow_secret@postgres:5432/restoflow?sslmode=disable
-      REDIS_URL: redis://redis:6379/0
-      JWT_ACCESS_SECRET: restoflow_super_secure_jwt_access_secret_2026_xyz
-      JWT_REFRESH_SECRET: restoflow_super_secure_jwt_refresh_secret_2026_xyz
-      ACCESS_TTL: 15m
-      REFRESH_TTL: 720h
-      CORS_ORIGINS: "*"
-      DEFAULT_CURRENCY: BDT
-      DEFAULT_TIMEZONE: Asia/Dhaka
-      TRIAL_DAYS: 14
+      HTTP_PORT: "8080"
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL in .env}
+      MIGRATIONS_DIR: /app/migrations
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-BDT}
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Dhaka}
+      TZ: ${DEFAULT_TIMEZONE:-Asia/Dhaka}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    image: novamart-api:${IMAGE_TAG:-latest}
+    container_name: novamart-worker
+    entrypoint: ["/app/worker"]
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: ${COMPOSE_DATABASE_URL:?Set COMPOSE_DATABASE_URL in .env}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?Set JWT_ACCESS_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-BDT}
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Asia/Dhaka}
+      TZ: ${DEFAULT_TIMEZONE:-Asia/Dhaka}
     restart: unless-stopped
 
   web:
     build:
       context: .
       dockerfile: frontend/Dockerfile
-    container_name: restoflow-web
+    container_name: novamart-web
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
-      - "80:80"
+      - "${WEB_PORT:-80}:80"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   pgdata:

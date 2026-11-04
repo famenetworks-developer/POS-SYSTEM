@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { MenuItem as Product, Category } from '../../types';
-import { api } from '../../lib/api';
+import { api, API_BASE } from '../../lib/api';
 import { formatMoney, toMinorUnits } from '../../lib/money';
 import {
   Plus,
@@ -161,8 +161,23 @@ export const ProductManager: React.FC = () => {
     setIsNewArrival(false);
   };
 
-  const handleExportCSV = () => {
-    window.open('http://localhost:8080/api/v1/items/export', '_blank');
+  const handleExportCSV = async () => {
+    try {
+      const token = localStorage.getItem('restoflow_token');
+      const response = await fetch(`${API_BASE}/items/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error(`Export failed (${response.status})`);
+
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = objectUrl;
+      link.download = 'novamart_products.csv';
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (error) {
+      console.error('[Products] CSV export failed', error);
+    }
   };
 
   const filteredProducts = products.filter((p) => {

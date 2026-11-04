@@ -1,4 +1,8 @@
-export const API_BASE = 'http://localhost:8080/api/v1';
+const configuredApiBase = import.meta.env.VITE_API_BASE_URL?.trim();
+
+// Same-origin is the production default. Vite proxies this path to the local
+// API during development, while Nginx proxies it in the container image.
+export const API_BASE = (configuredApiBase || '/api/v1').replace(/\/$/, '');
 
 export class ApiError extends Error {
   code: string;

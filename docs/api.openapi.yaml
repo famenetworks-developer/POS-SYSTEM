@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
-  title: RestoFlow POS API
-  description: Restaurant Billing, KOT, Inventory and Profit Automation Multi-tenant SaaS Platform API
+  title: NovaMart POS API
+  description: Supermarket checkout, inventory, fulfillment, and multi-branch retail management API
   version: 1.0.0
 servers:
   - url: http://localhost:8080/api/v1

@@ -14,8 +14,32 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true // Allow all origins for dev / mobile / POS clients
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			return true // Non-browser POS clients do not always send Origin.
+		}
+		if wsAllowAllOrigins {
+			return true
+		}
+		return wsAllowedOrigins[origin]
 	},
+}
+
+var (
+	wsAllowedOrigins  = map[string]bool{}
+	wsAllowAllOrigins bool
+)
+
+func ConfigureWSOrigins(origins []string) {
+	wsAllowedOrigins = make(map[string]bool, len(origins))
+	wsAllowAllOrigins = false
+	for _, origin := range origins {
+		if origin == "*" {
+			wsAllowAllOrigins = true
+			continue
+		}
+		wsAllowedOrigins[origin] = true
+	}
 }
 
 type WSEvent struct {

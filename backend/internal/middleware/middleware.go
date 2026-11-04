@@ -14,8 +14,8 @@ import (
 type contextKey string
 
 const (
-	UserContextKey       contextKey = "user_claims"
-	RequestIDContextKey  contextKey = "request_id"
+	UserContextKey      contextKey = "user_claims"
+	RequestIDContextKey contextKey = "request_id"
 )
 
 type UserClaims struct {
@@ -93,6 +93,9 @@ func Auth(jwtSecret string) func(http.Handler) http.Handler {
 
 			claims := &UserClaims{}
 			token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+				if t.Method != jwt.SigningMethodHS256 {
+					return nil, jwt.ErrSignatureInvalid
+				}
 				return []byte(jwtSecret), nil
 			})
 

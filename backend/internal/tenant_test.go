@@ -9,7 +9,10 @@ import (
 )
 
 func TestTenantIsolation(t *testing.T) {
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Invalid test configuration: %v", err)
+	}
 	db, err := platform.NewDB(cfg.DatabaseURL)
 	if err != nil {
 		t.Skipf("Postgres DB not available for integration test: %v", err)

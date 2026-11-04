@@ -21,9 +21,9 @@ import (
 )
 
 type AuthService struct {
-	pool   *pgxpool.Pool
-	cfg    *config.Config
-	audit  *audit.AuditService
+	pool  *pgxpool.Pool
+	cfg   *config.Config
+	audit *audit.AuditService
 }
 
 func NewAuthService(pool *pgxpool.Pool, cfg *config.Config, audit *audit.AuditService) *AuthService {
@@ -225,11 +225,11 @@ func (s *AuthService) Register(ctx context.Context, req RegisterRequest) (map[st
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user": map[string]interface{}{
-			"id":                  userID,
-			"name":                req.OwnerName,
-			"email":               strings.ToLower(req.Email),
-			"role":                "owner",
-			"restaurant_id":       restID,
+			"id":                 userID,
+			"name":               req.OwnerName,
+			"email":              strings.ToLower(req.Email),
+			"role":               "owner",
+			"restaurant_id":      restID,
 			"discount_limit_pct": 100.0,
 		},
 		"restaurant": map[string]interface{}{
@@ -312,11 +312,11 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (map[st
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user": map[string]interface{}{
-			"id":                  user.ID,
-			"name":                user.Name,
-			"email":               user.Email,
-			"role":                user.Role,
-			"restaurant_id":       rid,
+			"id":                 user.ID,
+			"name":               user.Name,
+			"email":              user.Email,
+			"role":               user.Role,
+			"restaurant_id":      rid,
 			"discount_limit_pct": user.DiscountLimitPct,
 		},
 		"restaurant": restaurant,
@@ -363,11 +363,11 @@ func (s *AuthService) PINLogin(ctx context.Context, req PINLoginRequest) (map[st
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user": map[string]interface{}{
-			"id":                  user.ID,
-			"name":                user.Name,
-			"email":               user.Email,
-			"role":                user.Role,
-			"restaurant_id":       rid,
+			"id":                 user.ID,
+			"name":               user.Name,
+			"email":              user.Email,
+			"role":               user.Role,
+			"restaurant_id":      rid,
 			"discount_limit_pct": user.DiscountLimitPct,
 		},
 		"branch_id": req.BranchID,
@@ -558,6 +558,7 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 	// Protected endpoints
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth(s.cfg.JWTAccessSecret))
+		pr.Use(middleware.RequireAppAccess)
 
 		pr.Get("/me", func(w http.ResponseWriter, req *http.Request) {
 			claims := middleware.GetUserClaims(req.Context())

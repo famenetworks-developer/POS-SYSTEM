@@ -104,11 +104,21 @@ export const Navbar: React.FC = () => {
     }
   };
 
+  const backOfficePath = user?.role === 'inventory_manager'
+    ? '/admin/inventory'
+    : user?.role === 'purchase_manager'
+      ? '/admin/suppliers'
+      : user?.role === 'accountant'
+        ? '/admin/reports'
+        : user?.role === 'cashier'
+          ? '/admin/shifts'
+          : '/admin';
+
   const navItems = [
-    { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['owner', 'manager', 'cashier', 'delivery_staff', 'super_admin'] },
-    { path: '/fulfillment', label: t('fulfillment'), icon: Truck, roles: ['owner', 'manager', 'delivery_staff', 'cashier', 'super_admin'] },
-    { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'manager', 'cashier', 'super_admin'] },
-    { path: '/admin', label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'manager', 'inventory_manager', 'purchase_manager', 'accountant', 'super_admin'] },
+    { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['owner', 'manager', 'cashier'] },
+    { path: '/fulfillment', label: t('fulfillment'), icon: Truck, roles: ['owner', 'manager', 'delivery_staff'] },
+    { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'manager'] },
+    { path: backOfficePath, label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'manager', 'cashier', 'inventory_manager', 'purchase_manager', 'accountant'] },
   ];
 
   if (user?.role === 'super_admin') {

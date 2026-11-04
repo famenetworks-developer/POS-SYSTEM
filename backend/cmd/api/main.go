@@ -139,6 +139,7 @@ func main() {
 		// Protected endpoints
 		v1.Group(func(pr chi.Router) {
 			pr.Use(middleware.Auth(cfg.JWTAccessSecret))
+			pr.Use(middleware.RequireAppAccess)
 
 			settingsService.MountRoutes(pr)
 			menuService.MountRoutes(pr)

@@ -27,7 +27,7 @@ import {
 } from 'recharts';
 
 export const AdminDashboard: React.FC = () => {
-  const { restaurant, activeBranch } = useAuth();
+  const { restaurant, activeBranch, user } = useAuth();
   const [data, setData] = useState<any>(null);
   const [stockSummary, setStockSummary] = useState<{ totalValuationMinor: number; lowStockCount: number }>({
     totalValuationMinor: 0,
@@ -137,8 +137,8 @@ export const AdminDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Card 2: Month Net Profit */}
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-[#0D5C3A]/40 transition-all">
+        {/* Owner-only strategic profitability */}
+        {user?.role === 'owner' && <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-[#0D5C3A]/40 transition-all">
           <div className="flex justify-between items-start">
             <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Month Net Profit</span>
             <div className="p-2 rounded-xl bg-[#E6F4EA] text-[#0D5C3A] border border-[#C6E6D2]">
@@ -153,7 +153,7 @@ export const AdminDashboard: React.FC = () => {
               Store Margin: {data.month_margin_pct?.toFixed(1) || '24.5'}% (Automated P&L)
             </p>
           </div>
-        </div>
+        </div>}
 
         {/* Card 3: Inventory Valuation */}
         <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-sm relative overflow-hidden group hover:border-[#0D5C3A]/40 transition-all">

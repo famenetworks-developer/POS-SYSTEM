@@ -11,6 +11,80 @@ import (
 	"github.com/google/uuid"
 )
 
+func roleAllowed(role string, roles ...string) bool {
+	for _, allowed := range roles {
+		if role == allowed {
+			return true
+		}
+	}
+	return false
+}
+
+// RequireAppAccess is the API-side RBAC boundary. UI visibility is only a
+// convenience; this middleware is the authority for protected business data.
+func RequireAppAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		claims := GetUserClaims(r.Context())
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+		write := r.Method != http.MethodGet && r.Method != http.MethodHead
+		allowed := true
+
+		switch {
+		case strings.HasPrefix(path, "/admin/"):
+			allowed = roleAllowed(claims.Role, "super_admin")
+		case path == "/users" || strings.HasPrefix(path, "/users/"):
+			allowed = roleAllowed(claims.Role, "owner")
+		case path == "/reports/profit-loss" || path == "/audit-logs":
+			allowed = roleAllowed(claims.Role, "owner", "accountant")
+		case path == "/reports/dashboard" || path == "/reports/exceptions":
+			allowed = roleAllowed(claims.Role, "owner", "manager")
+		case path == "/expenses" || strings.HasPrefix(path, "/expenses/"):
+			allowed = roleAllowed(claims.Role, "owner", "accountant")
+		case path == "/settings" || path == "/restaurant" || path == "/branches":
+			allowed = !write || roleAllowed(claims.Role, "owner")
+		case strings.HasPrefix(path, "/inventory-items") || strings.HasPrefix(path, "/stock") || strings.HasPrefix(path, "/recipes"):
+			if write {
+				allowed = roleAllowed(claims.Role, "owner", "inventory_manager")
+			} else {
+				allowed = roleAllowed(claims.Role, "owner", "manager", "inventory_manager")
+			}
+		case strings.HasPrefix(path, "/suppliers") || strings.HasPrefix(path, "/purchase-orders"):
+			if write {
+				allowed = roleAllowed(claims.Role, "owner", "purchase_manager")
+			} else {
+				allowed = roleAllowed(claims.Role, "owner", "manager", "purchase_manager")
+			}
+		case path == "/categories" || strings.HasPrefix(path, "/items"):
+			allowed = !write || roleAllowed(claims.Role, "owner", "inventory_manager")
+		case strings.HasPrefix(path, "/orders"):
+			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
+			if strings.HasSuffix(path, "/refund") || strings.HasSuffix(path, "/cancel") {
+				allowed = roleAllowed(claims.Role, "owner", "manager")
+			}
+		case strings.HasPrefix(path, "/shifts"):
+			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
+		case strings.HasPrefix(path, "/table"):
+			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier") && (!write || roleAllowed(claims.Role, "owner", "manager"))
+		case strings.HasPrefix(path, "/deliveries") || strings.HasPrefix(path, "/kots"):
+			allowed = roleAllowed(claims.Role, "owner", "manager", "delivery_staff")
+		case strings.HasPrefix(path, "/customers"):
+			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
+		case strings.HasPrefix(path, "/sync") || path == "/pos/bootstrap" || strings.HasPrefix(path, "/promotions"):
+			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
+		}
+
+		if !allowed {
+			JSONError(w, http.StatusForbidden, "FORBIDDEN", "This position is not permitted to perform this action", nil)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 type contextKey string
 
 const (

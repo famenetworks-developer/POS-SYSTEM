@@ -49,7 +49,7 @@ export const FloorAssistantView: React.FC = () => {
   };
 
   return (
-    <div className="app-content-height flex-1 flex flex-col bg-[#F8FAFC] max-w-lg mx-auto w-full border-x border-[#E2E8F0]">
+    <div className="flex-1 flex flex-col h-[calc(100dvh-4rem)] bg-[#F8FAFC] max-w-lg mx-auto w-full border-x border-[#E2E8F0]">
       {/* Top Header */}
       <div className="p-4 bg-white border-b border-[#E2E8F0] shadow-xs shrink-0 flex items-center justify-between">
         <div className="flex items-center gap-2.5">

@@ -15,12 +15,15 @@ import {
   Clock,
   Settings,
   ShoppingBag,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const AdminLayout: React.FC = () => {
   const { user } = useAuth();
   const allTabs: Array<{ to: string; label: string; icon: React.ElementType; area: AppArea; end?: boolean }> = [
     { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, area: 'dashboard', end: true },
+    { to: '/admin/administration', label: 'Administration', icon: LayoutDashboard, area: 'administration' },
+    { to: '/admin/approvals', label: 'Approval Queue', icon: ShieldCheck, area: 'approvals' },
     { to: '/admin/products', label: 'Products & Catalogue', icon: Package, area: 'products' },
     { to: '/admin/registers', label: 'Registers & Counters', icon: LayoutGrid, area: 'registers' },
     { to: '/admin/inventory', label: 'Inventory & Stock', icon: Boxes, area: 'inventory' },

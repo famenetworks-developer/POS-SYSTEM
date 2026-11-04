@@ -9,7 +9,131 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// EnforceBranchScope validates branch identifiers against server-side user
+// assignments. It never accepts a frontend role or tenant assertion.
+func EnforceBranchScope(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetUserClaims(r.Context())
+			if claims == nil || roleAllowed(claims.Role, "owner", "admin", "accountant", "super_admin") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			branchID := r.URL.Query().Get("branch_id")
+			if branchID != "" {
+				var allowed bool
+				_ = pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM user_branches ub JOIN branches b ON b.id=ub.branch_id WHERE ub.user_id=$1 AND ub.branch_id::text=$2 AND b.restaurant_id::text=$3)`, claims.UserID, branchID, claims.RestaurantID).Scan(&allowed)
+				if !allowed {
+					JSONError(w, http.StatusForbidden, "BRANCH_FORBIDDEN", "This branch is not assigned to your account", nil)
+					return
+				}
+			}
+			parts := strings.Split(strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1"), "/"), "/")
+			if len(parts) >= 2 && parts[0] == "orders" {
+				if _, err := uuid.Parse(parts[1]); err == nil {
+					var allowed bool
+					_ = pool.QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM orders o WHERE o.id::text=$1 AND o.restaurant_id::text=$2 AND EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id::text=$3 AND ub.branch_id=o.branch_id) AND ($4<>'cashier' OR o.waiter_id::text=$3))`, parts[1], claims.RestaurantID, claims.UserID, claims.Role).Scan(&allowed)
+					if !allowed {
+						JSONError(w, 403, "ORDER_SCOPE_FORBIDDEN", "This order is outside your assigned scope", nil)
+						return
+					}
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func permissionForRequest(r *http.Request) []string {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1")
+	write := r.Method != http.MethodGet && r.Method != http.MethodHead
+	switch {
+	case strings.HasPrefix(path, "/admin/"):
+		return []string{"platform.manage"}
+	case strings.HasPrefix(path, "/users"):
+		return []string{"users.manage"}
+	case path == "/reports/profit-loss":
+		return []string{"reports.financial"}
+	case path == "/reports/dashboard" || path == "/reports/exceptions":
+		return []string{"reports.branch_sales", "reports.financial"}
+	case path == "/audit-logs":
+		return []string{"audit.view"}
+	case path == "/settings" || path == "/restaurant":
+		if write {
+			return []string{"settings.manage"}
+		}
+	case strings.HasPrefix(path, "/inventory-items") || strings.HasPrefix(path, "/stock") || strings.HasPrefix(path, "/recipes"):
+		if write {
+			return []string{"inventory.adjust"}
+		}
+		return []string{"inventory.view"}
+	case strings.HasPrefix(path, "/suppliers"):
+		if write {
+			return []string{"suppliers.manage"}
+		}
+		return []string{"purchases.view"}
+	case strings.HasPrefix(path, "/purchase-orders"):
+		if write {
+			return []string{"purchases.create"}
+		}
+		return []string{"purchases.view"}
+	case strings.HasSuffix(path, "/refund-request"):
+		return []string{"refunds.request"}
+	case strings.HasSuffix(path, "/discount-request"):
+		return []string{"discounts.request"}
+	case strings.HasSuffix(path, "/void-request"):
+		return []string{"voids.request"}
+	case strings.HasSuffix(path, "/refund"):
+		return []string{"refunds.approve"}
+	case strings.HasPrefix(path, "/orders"):
+		if write {
+			return []string{"sales.create", "refunds.approve", "discounts.approve", "voids.approve"}
+		}
+		return []string{"sales.view_own", "sales.view_branch", "sales.view_all"}
+	case strings.HasPrefix(path, "/shifts"):
+		return []string{"shifts.own", "shifts.manage"}
+	case strings.HasPrefix(path, "/table"):
+		if write {
+			return []string{"registers.manage"}
+		}
+	case strings.HasPrefix(path, "/customers"):
+		return []string{"customers.manage"}
+	case strings.HasPrefix(path, "/deliveries") || strings.HasPrefix(path, "/kots"):
+		return []string{"fulfillment.manage"}
+	}
+	return nil
+}
+
+// RequirePermission resolves role grants from the database on every protected
+// request, so token claims cannot broaden access after a role is changed.
+func RequirePermission(pool *pgxpool.Pool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			needed := permissionForRequest(r)
+			if len(needed) == 0 {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims := GetUserClaims(r.Context())
+			var role string
+			var active bool
+			if err := pool.QueryRow(r.Context(), "SELECT role,is_active FROM users WHERE id=$1", claims.UserID).Scan(&role, &active); err != nil || !active {
+				JSONError(w, http.StatusUnauthorized, "ACCOUNT_INACTIVE", "Account is not active", nil)
+				return
+			}
+			var allowed bool
+			_ = pool.QueryRow(r.Context(), "SELECT EXISTS(SELECT 1 FROM role_permissions WHERE role=$1 AND permission_code=ANY($2))", role, needed).Scan(&allowed)
+			if !allowed {
+				JSONError(w, http.StatusForbidden, "PERMISSION_DENIED", "Your role does not include the required permission", map[string]interface{}{"required_any": needed})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 func roleAllowed(role string, roles ...string) bool {
 	for _, allowed := range roles {
@@ -37,38 +161,40 @@ func RequireAppAccess(next http.Handler) http.Handler {
 		case strings.HasPrefix(path, "/admin/"):
 			allowed = roleAllowed(claims.Role, "super_admin")
 		case path == "/users" || strings.HasPrefix(path, "/users/"):
-			allowed = roleAllowed(claims.Role, "owner")
-		case path == "/reports/profit-loss" || path == "/audit-logs":
+			allowed = roleAllowed(claims.Role, "owner", "admin")
+		case path == "/reports/profit-loss":
 			allowed = roleAllowed(claims.Role, "owner", "accountant")
+		case path == "/audit-logs":
+			allowed = roleAllowed(claims.Role, "owner", "admin", "accountant")
 		case path == "/reports/dashboard" || path == "/reports/exceptions":
 			allowed = roleAllowed(claims.Role, "owner", "manager")
 		case path == "/expenses" || strings.HasPrefix(path, "/expenses/"):
 			allowed = roleAllowed(claims.Role, "owner", "accountant")
 		case path == "/settings" || path == "/restaurant" || path == "/branches":
-			allowed = !write || roleAllowed(claims.Role, "owner")
+			allowed = !write || roleAllowed(claims.Role, "owner", "admin")
 		case strings.HasPrefix(path, "/inventory-items") || strings.HasPrefix(path, "/stock") || strings.HasPrefix(path, "/recipes"):
 			if write {
 				allowed = roleAllowed(claims.Role, "owner", "inventory_manager")
 			} else {
-				allowed = roleAllowed(claims.Role, "owner", "manager", "inventory_manager")
+				allowed = roleAllowed(claims.Role, "owner", "admin", "manager", "inventory_manager", "purchase_manager")
 			}
 		case strings.HasPrefix(path, "/suppliers") || strings.HasPrefix(path, "/purchase-orders"):
 			if write {
 				allowed = roleAllowed(claims.Role, "owner", "purchase_manager")
 			} else {
-				allowed = roleAllowed(claims.Role, "owner", "manager", "purchase_manager")
+				allowed = roleAllowed(claims.Role, "owner", "admin", "manager", "purchase_manager")
 			}
 		case path == "/categories" || strings.HasPrefix(path, "/items"):
-			allowed = !write || roleAllowed(claims.Role, "owner", "inventory_manager")
+			allowed = (!write && roleAllowed(claims.Role, "owner", "admin", "manager", "cashier", "inventory_manager", "purchase_manager")) || (write && roleAllowed(claims.Role, "owner", "inventory_manager"))
 		case strings.HasPrefix(path, "/orders"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
 			if strings.HasSuffix(path, "/refund") || strings.HasSuffix(path, "/cancel") {
-				allowed = roleAllowed(claims.Role, "owner", "manager")
+				allowed = roleAllowed(claims.Role, "owner")
 			}
 		case strings.HasPrefix(path, "/shifts"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
 		case strings.HasPrefix(path, "/table"):
-			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier") && (!write || roleAllowed(claims.Role, "owner", "manager"))
+			allowed = roleAllowed(claims.Role, "owner", "admin", "manager", "cashier") && (!write || roleAllowed(claims.Role, "owner", "admin", "manager"))
 		case strings.HasPrefix(path, "/deliveries") || strings.HasPrefix(path, "/kots"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "delivery_staff")
 		case strings.HasPrefix(path, "/customers"):
@@ -205,7 +331,6 @@ func RequireRole(allowedRoles ...string) func(http.Handler) http.Handler {
 					return
 				}
 			}
-
 			JSONError(w, http.StatusForbidden, "FORBIDDEN", "Insufficient permissions for role: "+claims.Role, nil)
 		})
 	}

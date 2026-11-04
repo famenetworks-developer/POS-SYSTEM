@@ -20,6 +20,9 @@ import { StaffManager } from './features/admin/StaffManager';
 import { ShiftManager } from './features/admin/ShiftManager';
 import { SettingsView } from './features/admin/SettingsView';
 import { PlatformAdmin } from './features/platform/PlatformAdmin';
+import { TenantAdminDashboard } from './features/admin/TenantAdminDashboard';
+import { AccessDenied } from './features/auth/AccessDenied';
+import { ApprovalQueue } from './features/admin/ApprovalQueue';
 import { AppArea, canAccess, homeForRole } from './lib/rbac';
 
 const ProtectedLayout: React.FC = () => {
@@ -50,7 +53,7 @@ const ProtectedLayout: React.FC = () => {
 
 const RoleRoute: React.FC<{ area: AppArea; children: React.ReactNode }> = ({ area, children }) => {
   const { user } = useAuth();
-  return canAccess(user?.role, area) ? <>{children}</> : <Navigate to={homeForRole(user?.role)} replace />;
+  return canAccess(user?.role, area) ? <>{children}</> : <Navigate to="/access-denied" replace />;
 };
 
 const HomeRoute: React.FC = () => {
@@ -69,6 +72,7 @@ export const App: React.FC = () => {
 
           {/* Protected Application Routes */}
           <Route element={<ProtectedLayout />}>
+            <Route path="/access-denied" element={<AccessDenied />} />
             {/* POS Checkout Terminal */}
             <Route path="/pos" element={<RoleRoute area="pos"><POSTerminal /></RoleRoute>} />
 
@@ -87,6 +91,8 @@ export const App: React.FC = () => {
             {/* Back Office Admin Routes */}
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<RoleRoute area="dashboard"><AdminDashboard /></RoleRoute>} />
+              <Route path="administration" element={<RoleRoute area="administration"><TenantAdminDashboard /></RoleRoute>} />
+              <Route path="approvals" element={<RoleRoute area="approvals"><ApprovalQueue /></RoleRoute>} />
               <Route path="products" element={<RoleRoute area="products"><ProductManager /></RoleRoute>} />
               <Route path="menu" element={<Navigate to="/admin/products" replace />} />
               <Route path="registers" element={<RoleRoute area="registers"><RegisterManager /></RoleRoute>} />

@@ -110,6 +110,8 @@ export const Navbar: React.FC = () => {
       ? '/admin/suppliers'
       : user?.role === 'accountant'
         ? '/admin/reports'
+        : user?.role === 'admin'
+          ? '/admin/administration'
         : user?.role === 'cashier'
           ? '/admin/shifts'
           : '/admin';
@@ -118,7 +120,7 @@ export const Navbar: React.FC = () => {
     { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['owner', 'manager', 'cashier'] },
     { path: '/fulfillment', label: t('fulfillment'), icon: Truck, roles: ['owner', 'manager', 'delivery_staff'] },
     { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'manager'] },
-    { path: backOfficePath, label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'manager', 'cashier', 'inventory_manager', 'purchase_manager', 'accountant'] },
+    { path: backOfficePath, label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'cashier', 'inventory_manager', 'purchase_manager', 'accountant'] },
   ];
 
   if (user?.role === 'super_admin') {
@@ -135,6 +137,7 @@ export const Navbar: React.FC = () => {
       case 'accountant': return 'Accountant';
       case 'delivery_staff': return 'Delivery Staff';
       case 'super_admin': return 'Super Admin';
+      case 'admin': return 'Tenant Admin';
       default: return role || 'Staff';
     }
   };

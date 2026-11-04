@@ -70,6 +70,7 @@ export const StaffManager: React.FC = () => {
 
   const roleLabels: Record<string, { label: string; badge: string }> = {
     super_admin: { label: 'Super Admin', badge: 'bg-purple-50 text-purple-700 border-purple-200' },
+    admin: { label: 'Tenant Admin', badge: 'bg-indigo-50 text-indigo-700 border-indigo-200' },
     owner: { label: 'Store Owner', badge: 'bg-emerald-50 text-[#0D5C3A] border-emerald-200' },
     manager: { label: 'Branch Manager', badge: 'bg-blue-50 text-blue-700 border-blue-200' },
     cashier: { label: 'Cashier (Register)', badge: 'bg-green-50 text-green-700 border-green-200' },
@@ -270,7 +271,7 @@ export const StaffManager: React.FC = () => {
                     <option value="purchase_manager">Purchase Officer</option>
                     <option value="accountant">Chief Accountant</option>
                     <option value="delivery_staff">Delivery & Fulfillment</option>
-                    <option value="owner">Store Owner</option>
+                    {user?.role === 'owner' && <option value="admin">Tenant Administrator</option>}
                   </select>
                 </div>
 

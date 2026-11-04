@@ -21,7 +21,7 @@ func TestRequireAppAccess(t *testing.T) {
 		{"manager inventory is read only", "manager", http.MethodPost, "/api/v1/stock/adjust", http.StatusForbidden},
 		{"purchase can receive PO", "purchase_manager", http.MethodPost, "/api/v1/purchase-orders/abc/receive", http.StatusNoContent},
 		{"cashier cannot refund", "cashier", http.MethodPost, "/api/v1/orders/abc/refund", http.StatusForbidden},
-		{"manager can refund", "manager", http.MethodPost, "/api/v1/orders/abc/refund", http.StatusNoContent},
+		{"manager must use approval workflow", "manager", http.MethodPost, "/api/v1/orders/abc/refund", http.StatusForbidden},
 		{"owner manages staff", "owner", http.MethodPost, "/api/v1/users", http.StatusNoContent},
 		{"system admin cannot read business staff", "super_admin", http.MethodGet, "/api/v1/users", http.StatusForbidden},
 		{"system admin platform", "super_admin", http.MethodGet, "/api/v1/admin/restaurants", http.StatusNoContent},

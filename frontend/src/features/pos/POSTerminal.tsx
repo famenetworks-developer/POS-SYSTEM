@@ -478,18 +478,18 @@ export const POSTerminal: React.FC = () => {
     }
     try {
       // Find invoice from orders
-      const ordersList = await api.get('/orders');
+      const ordersList = await api.get(`/orders?branch_id=${activeBranch?.id || ''}`);
       const found = (ordersList || []).find((o: any) => o.order_no?.toString() === refundInvoiceInput.trim() || o.id === refundInvoiceInput.trim());
       if (!found) {
         alert('Invoice / Order not found in recent records.');
         return;
       }
-      await api.post(`/orders/${found.id}/refund`, {
+      await api.post(`/orders/${found.id}/refund-request`, {
         amount_minor: found.total_minor,
         reason: refundReason,
         restock: refundRestock,
       });
-      setRefundMessage(`Return processed successfully for Order #${found.order_no}`);
+      setRefundMessage(`Refund request submitted for Order #${found.order_no}. A Manager or Owner must approve it.`);
       loadData();
     } catch (err: any) {
       alert('Return failed: ' + err.message);

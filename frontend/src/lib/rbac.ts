@@ -1,7 +1,7 @@
 import { Role } from '../types';
 
 export type AppArea =
-  | 'pos' | 'fulfillment' | 'assistant' | 'registers' | 'dashboard'
+  | 'pos' | 'fulfillment' | 'assistant' | 'registers' | 'dashboard' | 'administration' | 'approvals'
   | 'products' | 'inventory' | 'sales' | 'customers' | 'purchases'
   | 'reports' | 'staff' | 'shifts' | 'settings' | 'platform';
 
@@ -11,15 +11,17 @@ const access: Record<AppArea, Role[]> = {
   assistant: ['owner', 'manager', 'cashier', 'inventory_manager'],
   registers: ['owner', 'manager'],
   dashboard: ['owner', 'manager'],
+  administration: ['admin'],
+  approvals: ['owner', 'manager'],
   products: ['owner', 'inventory_manager'],
   inventory: ['owner', 'inventory_manager'],
   sales: ['owner', 'manager'],
   customers: ['owner', 'manager', 'cashier'],
   purchases: ['owner', 'purchase_manager'],
   reports: ['owner', 'accountant'],
-  staff: ['owner'],
+  staff: ['owner', 'admin'],
   shifts: ['owner', 'manager', 'cashier'],
-  settings: ['owner'],
+  settings: ['owner', 'admin'],
   platform: ['super_admin'],
 };
 
@@ -29,6 +31,7 @@ export const canAccess = (role: Role | undefined, area: AppArea) =>
 export const homeForRole = (role: Role | undefined) => {
   switch (role) {
     case 'super_admin': return '/platform';
+    case 'admin': return '/admin/administration';
     case 'owner':
     case 'manager': return '/admin';
     case 'inventory_manager': return '/admin/inventory';

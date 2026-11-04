@@ -719,6 +719,14 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
+		if claims.Role != "owner" && claims.Role != "admin" {
+			var allowed bool
+			_ = s.pool.QueryRow(req.Context(), "SELECT EXISTS(SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id::text=$2)", claims.UserID, body.BranchID).Scan(&allowed)
+			if !allowed {
+				middleware.JSONError(w, http.StatusForbidden, "BRANCH_FORBIDDEN", "This branch is not assigned to your account", nil)
+				return
+			}
+		}
 
 		order, err := s.CreateOrder(req.Context(), restID, claims.UserID, body)
 		if err != nil {
@@ -741,6 +749,7 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 
 	r.Get("/orders", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		branchID := req.URL.Query().Get("branch_id")
 		status := req.URL.Query().Get("status")
 
@@ -751,20 +760,14 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 			LEFT JOIN tables t ON o.table_id = t.id
 			LEFT JOIN customers c ON o.customer_id = c.id
 			WHERE o.restaurant_id = $1
+			  AND ($2 = '' OR o.branch_id::text = $2)
+			  AND ($3 IN ('owner','admin','accountant') OR EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id::text=$4 AND ub.branch_id=o.branch_id))
+			  AND ($3 <> 'cashier' OR o.waiter_id::text=$4)
+			  AND ($5 = '' OR o.status=$5)
 		`
+		query += " ORDER BY o.opened_at DESC LIMIT 50"
 		var rows pgx.Rows
-		var err error
-
-		if status != "" && branchID != "" {
-			query += " AND o.branch_id = $2 AND o.status = $3 ORDER BY o.opened_at DESC LIMIT 50"
-			rows, err = s.pool.Query(req.Context(), query, restID, branchID, status)
-		} else if branchID != "" {
-			query += " AND o.branch_id = $2 ORDER BY o.opened_at DESC LIMIT 50"
-			rows, err = s.pool.Query(req.Context(), query, restID, branchID)
-		} else {
-			query += " ORDER BY o.opened_at DESC LIMIT 50"
-			rows, err = s.pool.Query(req.Context(), query, restID)
-		}
+		rows, err := s.pool.Query(req.Context(), query, restID, branchID, claims.Role, claims.UserID, status)
 
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "FETCH_FAILED", err.Error(), nil)

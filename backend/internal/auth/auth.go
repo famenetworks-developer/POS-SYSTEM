@@ -558,7 +558,8 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 	// Protected endpoints
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth(s.cfg.JWTAccessSecret))
-		pr.Use(middleware.RequireAppAccess)
+		pr.Use(middleware.RequirePermission(s.pool))
+		pr.Use(middleware.EnforceBranchScope(s.pool))
 
 		pr.Get("/me", func(w http.ResponseWriter, req *http.Request) {
 			claims := middleware.GetUserClaims(req.Context())
@@ -594,10 +595,27 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 
 		pr.Post("/users", func(w http.ResponseWriter, req *http.Request) {
 			restID := middleware.GetRestaurantID(req.Context())
+			claims := middleware.GetUserClaims(req.Context())
 			var body CreateUserRequest
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 				middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 				return
+			}
+			allowedRoles := map[string]bool{"manager": true, "cashier": true, "inventory_manager": true, "purchase_manager": true, "accountant": true, "delivery_staff": true}
+			if claims.Role == "owner" {
+				allowedRoles["admin"] = true
+			}
+			if !allowedRoles[body.Role] {
+				middleware.JSONError(w, http.StatusForbidden, "ROLE_ESCALATION_BLOCKED", "You cannot assign this role", nil)
+				return
+			}
+			for _, branchID := range body.BranchIDs {
+				var valid bool
+				_ = s.pool.QueryRow(req.Context(), "SELECT EXISTS(SELECT 1 FROM branches WHERE id::text = $1 AND restaurant_id::text = $2)", branchID, restID).Scan(&valid)
+				if !valid {
+					middleware.JSONError(w, http.StatusBadRequest, "INVALID_BRANCH", "A selected branch does not belong to this business", nil)
+					return
+				}
 			}
 			user, err := s.CreateUser(req.Context(), restID, body)
 			if err != nil {
@@ -609,12 +627,26 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 
 		pr.Patch("/users/{id}/status", func(w http.ResponseWriter, req *http.Request) {
 			restID := middleware.GetRestaurantID(req.Context())
+			claims := middleware.GetUserClaims(req.Context())
 			targetID := chi.URLParam(req, "id")
 			var body struct {
 				IsActive bool `json:"is_active"`
 			}
 			if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 				middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+				return
+			}
+			if targetID == claims.UserID {
+				middleware.JSONError(w, http.StatusForbidden, "SELF_MODIFICATION_BLOCKED", "You cannot disable your own account", nil)
+				return
+			}
+			var targetRole string
+			if err := s.pool.QueryRow(req.Context(), "SELECT role FROM users WHERE id = $1 AND restaurant_id = $2", targetID, restID).Scan(&targetRole); err != nil {
+				middleware.JSONError(w, http.StatusNotFound, "USER_NOT_FOUND", "User was not found", nil)
+				return
+			}
+			if targetRole == "owner" || targetRole == "super_admin" || (claims.Role == "admin" && targetRole == "admin") {
+				middleware.JSONError(w, http.StatusForbidden, "PROTECTED_ACCOUNT", "This account cannot be modified by your role", nil)
 				return
 			}
 			_, err := s.pool.Exec(req.Context(), "UPDATE users SET is_active = $1 WHERE id = $2 AND restaurant_id = $3", body.IsActive, targetID, restID)

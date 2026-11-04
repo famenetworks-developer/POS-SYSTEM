@@ -222,6 +222,79 @@ func (s *InventoryService) MountRoutes(r chi.Router) {
 	})
 
 	// Purchase Orders
+	r.Post("/purchase-orders", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
+		var body struct {
+			BranchID   string     `json:"branch_id"`
+			SupplierID string     `json:"supplier_id"`
+			ExpectedAt *time.Time `json:"expected_at"`
+			Lines      []struct {
+				InventoryItemID string  `json:"inventory_item_id"`
+				Qty             float64 `json:"qty"`
+				UnitCostMinor   int64   `json:"unit_cost_minor"`
+			} `json:"lines"`
+		}
+		if json.NewDecoder(req.Body).Decode(&body) != nil || body.BranchID == "" || body.SupplierID == "" || len(body.Lines) == 0 {
+			middleware.JSONError(w, 400, "INVALID_BODY", "Branch, supplier and at least one line are required", nil)
+			return
+		}
+		var allowedBranch, validSupplier bool
+		_ = s.pool.QueryRow(req.Context(), `SELECT EXISTS(SELECT 1 FROM branches b WHERE b.id::text=$1 AND b.restaurant_id::text=$2 AND ($3='owner' OR EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id=$4 AND ub.branch_id=b.id)))`, body.BranchID, restID, claims.Role, claims.UserID).Scan(&allowedBranch)
+		_ = s.pool.QueryRow(req.Context(), "SELECT EXISTS(SELECT 1 FROM suppliers WHERE id::text=$1 AND restaurant_id::text=$2)", body.SupplierID, restID).Scan(&validSupplier)
+		if !allowedBranch || !validSupplier {
+			middleware.JSONError(w, 403, "SCOPE_FORBIDDEN", "Branch or supplier is outside your authorized scope", nil)
+			return
+		}
+		var total int64
+		for _, line := range body.Lines {
+			if line.Qty <= 0 || line.UnitCostMinor < 0 {
+				middleware.JSONError(w, 400, "INVALID_LINE", "Quantities and costs must be valid", nil)
+				return
+			}
+			total += int64(line.Qty * float64(line.UnitCostMinor))
+		}
+		var threshold int64 = 5000000
+		_ = s.pool.QueryRow(req.Context(), "SELECT COALESCE((value->>'purchase_minor')::bigint,5000000) FROM settings WHERE restaurant_id=$1 AND key='approval_limits'", restID).Scan(&threshold)
+		status := "approved"
+		if total > threshold && claims.Role != "owner" {
+			status = "pending_approval"
+		}
+		tx, err := s.pool.Begin(req.Context())
+		if err != nil {
+			middleware.JSONError(w, 500, "DB_ERROR", err.Error(), nil)
+			return
+		}
+		defer tx.Rollback(req.Context())
+		var poID string
+		err = tx.QueryRow(req.Context(), `INSERT INTO purchase_orders(restaurant_id,branch_id,supplier_id,status,total_minor,created_by,approved_by,approved_at,expected_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $4='approved' THEN $6::uuid END,CASE WHEN $4='approved' THEN NOW() END,$7) RETURNING id`, restID, body.BranchID, body.SupplierID, status, total, claims.UserID, body.ExpectedAt).Scan(&poID)
+		if err != nil {
+			middleware.JSONError(w, 400, "CREATE_FAILED", err.Error(), nil)
+			return
+		}
+		for _, line := range body.Lines {
+			tag, lineErr := tx.Exec(req.Context(), `INSERT INTO purchase_order_lines(purchase_order_id,inventory_item_id,qty,unit_cost_minor) SELECT $1,i.id,$3,$4 FROM inventory_items i WHERE i.id::text=$2 AND i.restaurant_id::text=$5`, poID, line.InventoryItemID, line.Qty, line.UnitCostMinor, restID)
+			if lineErr != nil || tag.RowsAffected() != 1 {
+				middleware.JSONError(w, 400, "INVALID_ITEM", "Purchase line item does not belong to this business", nil)
+				return
+			}
+		}
+		if status == "pending_approval" {
+			var approvalID string
+			payload, _ := json.Marshal(map[string]interface{}{"purchase_order_id": poID})
+			err = tx.QueryRow(req.Context(), `INSERT INTO approval_requests(restaurant_id,branch_id,type,entity_type,entity_id,requested_by,reason,amount_minor,payload) VALUES($1,$2,'purchase','purchase_order',$3,$4,'Purchase exceeds approval threshold',$5,$6) RETURNING id`, restID, body.BranchID, poID, claims.UserID, total, payload).Scan(&approvalID)
+			if err == nil {
+				_, _ = tx.Exec(req.Context(), "INSERT INTO approval_status_history(approval_request_id,to_status,changed_by,note) VALUES($1,'pending',$2,'Purchase threshold approval required')", approvalID, claims.UserID)
+			}
+		}
+		if err = tx.Commit(req.Context()); err != nil {
+			middleware.JSONError(w, 500, "COMMIT_FAILED", err.Error(), nil)
+			return
+		}
+		s.audit.Log(req.Context(), "CREATE_PO", "purchase_order", &poID, nil, map[string]interface{}{"status": status, "total_minor": total}, "", "")
+		middleware.JSONSuccess(w, 201, map[string]interface{}{"id": poID, "status": status, "total_minor": total}, nil)
+	})
+
 	r.Get("/purchase-orders", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
 		branchID := req.URL.Query().Get("branch_id")
@@ -270,6 +343,10 @@ func (s *InventoryService) MountRoutes(r chi.Router) {
 
 		if status == "received" {
 			middleware.JSONError(w, http.StatusBadRequest, "ALREADY_RECEIVED", "Purchase order is already received", nil)
+			return
+		}
+		if status != "approved" && status != "partially_received" {
+			middleware.JSONError(w, http.StatusForbidden, "PO_NOT_APPROVED", "Purchase order must be approved before receiving stock", nil)
 			return
 		}
 

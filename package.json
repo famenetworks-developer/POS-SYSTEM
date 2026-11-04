@@ -9,7 +9,8 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "build:frontend": "npm --prefix frontend run build",
     "start:backend": "cd backend && go run ./cmd/api",
-    "test:e2e": "powershell -ExecutionPolicy Bypass -File .\\test_e2e.ps1"
+    "test:e2e": "powershell -ExecutionPolicy Bypass -File .\\test_e2e.ps1",
+    "test:rbac": "powershell -ExecutionPolicy Bypass -File .\\test_rbac_e2e.ps1"
   }
 }
 

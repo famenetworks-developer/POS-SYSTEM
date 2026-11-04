@@ -347,7 +347,6 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
-
 		tx, err := s.pool.Begin(req.Context())
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "TX_ERROR", err.Error(), nil)
@@ -413,7 +412,6 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusInternalServerError, "COMMIT_ERROR", err.Error(), nil)
 			return
 		}
-
 		middleware.JSONSuccess(w, http.StatusCreated, map[string]interface{}{"id": itemID, "name": body.NameEN}, nil)
 	})
 
@@ -722,6 +720,35 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
+		if strings.TrimSpace(body.Reason) == "" || body.QtyChange == 0 {
+			middleware.JSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "A non-zero adjustment and reason are required", nil)
+			return
+		}
+		var branchAllowed bool
+		_ = s.pool.QueryRow(req.Context(), `SELECT EXISTS(SELECT 1 FROM branches b WHERE b.id::text=$1 AND b.restaurant_id::text=$2 AND ($3='owner' OR EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id::text=$4 AND ub.branch_id=b.id)))`, body.BranchID, restID, claims.Role, claims.UserID).Scan(&branchAllowed)
+		if !branchAllowed {
+			middleware.JSONError(w, http.StatusForbidden, "BRANCH_FORBIDDEN", "This branch is outside your assigned scope", nil)
+			return
+		}
+		var threshold float64 = 100
+		_ = s.pool.QueryRow(req.Context(), "SELECT COALESCE((value->>'stock_adjustment_qty')::numeric,100) FROM settings WHERE restaurant_id=$1 AND key='approval_limits'", restID).Scan(&threshold)
+		absQty := body.QtyChange
+		if absQty < 0 {
+			absQty = -absQty
+		}
+		if absQty > threshold && claims.Role != "owner" {
+			payload, _ := json.Marshal(body)
+			var requestID string
+			err := s.pool.QueryRow(req.Context(), `INSERT INTO approval_requests(restaurant_id,branch_id,type,entity_type,entity_id,requested_by,reason,payload) VALUES($1,$2,'stock_adjustment','product',$3,$4,$5,$6) RETURNING id`, restID, body.BranchID, body.ProductID, claims.UserID, body.Reason, payload).Scan(&requestID)
+			if err != nil {
+				middleware.JSONError(w, http.StatusBadRequest, "REQUEST_FAILED", err.Error(), nil)
+				return
+			}
+			_, _ = s.pool.Exec(req.Context(), "INSERT INTO approval_status_history(approval_request_id,to_status,changed_by,note) VALUES($1,'pending',$2,$3)", requestID, claims.UserID, body.Reason)
+			s.audit.Log(req.Context(), "REQUEST_STOCK_ADJUSTMENT", "approval_request", &requestID, nil, body, "", "")
+			middleware.JSONSuccess(w, http.StatusAccepted, map[string]string{"id": requestID, "status": "pending_approval"}, nil)
+			return
+		}
 
 		tx, err := s.pool.Begin(req.Context())
 		if err != nil {
@@ -755,6 +782,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusInternalServerError, "COMMIT_FAILED", err.Error(), nil)
 			return
 		}
+		s.audit.Log(req.Context(), "STOCK_ADJUSTMENT", "stock_adjustment", &adjID, nil, body, "", "")
 		middleware.JSONSuccess(w, http.StatusCreated, map[string]string{"id": adjID, "status": "recorded"}, nil)
 	})
 

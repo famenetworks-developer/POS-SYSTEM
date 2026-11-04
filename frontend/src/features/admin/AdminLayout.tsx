@@ -1,5 +1,7 @@
 import React from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
+import { AppArea, canAccess } from '../../lib/rbac';
 import {
   LayoutDashboard,
   Package,
@@ -13,22 +15,27 @@ import {
   Clock,
   Settings,
   ShoppingBag,
+  ShieldCheck,
 } from 'lucide-react';
 
 export const AdminLayout: React.FC = () => {
-  const tabs = [
-    { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
-    { to: '/admin/products', label: 'Products & Catalogue', icon: Package },
-    { to: '/admin/registers', label: 'Registers & Counters', icon: LayoutGrid },
-    { to: '/admin/inventory', label: 'Inventory & Stock', icon: Boxes },
-    { to: '/admin/sales', label: 'Sales & Invoices', icon: Receipt },
-    { to: '/admin/customers', label: 'Customers & Loyalty', icon: Users },
-    { to: '/admin/suppliers', label: 'Suppliers & Purchases', icon: Truck },
-    { to: '/admin/reports', label: 'Financial Reports', icon: LineChart },
-    { to: '/admin/staff', label: 'Staff & Roles', icon: UserCheck },
-    { to: '/admin/shifts', label: 'Register Shifts', icon: Clock },
-    { to: '/admin/settings', label: 'Store Settings', icon: Settings },
+  const { user } = useAuth();
+  const allTabs: Array<{ to: string; label: string; icon: React.ElementType; area: AppArea; end?: boolean }> = [
+    { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, area: 'dashboard', end: true },
+    { to: '/admin/administration', label: 'Administration', icon: LayoutDashboard, area: 'administration' },
+    { to: '/admin/approvals', label: 'Approval Queue', icon: ShieldCheck, area: 'approvals' },
+    { to: '/admin/products', label: 'Products & Catalogue', icon: Package, area: 'products' },
+    { to: '/admin/registers', label: 'Registers & Counters', icon: LayoutGrid, area: 'registers' },
+    { to: '/admin/inventory', label: 'Inventory & Stock', icon: Boxes, area: 'inventory' },
+    { to: '/admin/sales', label: 'Sales & Invoices', icon: Receipt, area: 'sales' },
+    { to: '/admin/customers', label: 'Customers & Loyalty', icon: Users, area: 'customers' },
+    { to: '/admin/suppliers', label: 'Suppliers & Purchases', icon: Truck, area: 'purchases' },
+    { to: '/admin/reports', label: 'Financial Reports', icon: LineChart, area: 'reports' },
+    { to: '/admin/staff', label: 'Staff & Roles', icon: UserCheck, area: 'staff' },
+    { to: '/admin/shifts', label: user?.role === 'cashier' ? 'My Shift' : 'Register Shifts', icon: Clock, area: 'shifts' },
+    { to: '/admin/settings', label: 'Store Settings', icon: Settings, area: 'settings' },
   ];
+  const tabs = allTabs.filter((tab) => canAccess(user?.role, tab.area));
 
   return (
     <div className="app-content-height flex-1 flex flex-col md:flex-row overflow-hidden bg-[#F8FAFC]">

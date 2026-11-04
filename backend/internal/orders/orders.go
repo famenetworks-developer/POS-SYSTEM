@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -623,13 +624,13 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	}, "", "")
 
 	return map[string]interface{}{
-		"order_id":      orderID,
-		"invoice_no":    invoiceNo,
-		"status":        "paid",
-		"total_minor":   totalMinor,
-		"paid_minor":    newPaidMinor,
-		"change_due":    changeDue,
-		"payments":      paymentRecords,
+		"order_id":    orderID,
+		"invoice_no":  invoiceNo,
+		"status":      "paid",
+		"total_minor": totalMinor,
+		"paid_minor":  newPaidMinor,
+		"change_due":  changeDue,
+		"payments":    paymentRecords,
 	}, nil
 }
 
@@ -718,6 +719,14 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
+		if claims.Role != "owner" && claims.Role != "admin" {
+			var allowed bool
+			_ = s.pool.QueryRow(req.Context(), "SELECT EXISTS(SELECT 1 FROM user_branches WHERE user_id=$1 AND branch_id::text=$2)", claims.UserID, body.BranchID).Scan(&allowed)
+			if !allowed {
+				middleware.JSONError(w, http.StatusForbidden, "BRANCH_FORBIDDEN", "This branch is not assigned to your account", nil)
+				return
+			}
+		}
 
 		order, err := s.CreateOrder(req.Context(), restID, claims.UserID, body)
 		if err != nil {
@@ -740,6 +749,7 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 
 	r.Get("/orders", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		branchID := req.URL.Query().Get("branch_id")
 		status := req.URL.Query().Get("status")
 
@@ -750,20 +760,14 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 			LEFT JOIN tables t ON o.table_id = t.id
 			LEFT JOIN customers c ON o.customer_id = c.id
 			WHERE o.restaurant_id = $1
+			  AND ($2 = '' OR o.branch_id::text = $2)
+			  AND ($3 IN ('owner','admin','accountant') OR EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id::text=$4 AND ub.branch_id=o.branch_id))
+			  AND ($3 <> 'cashier' OR o.waiter_id::text=$4)
+			  AND ($5 = '' OR o.status=$5)
 		`
+		query += " ORDER BY o.opened_at DESC LIMIT 50"
 		var rows pgx.Rows
-		var err error
-
-		if status != "" && branchID != "" {
-			query += " AND o.branch_id = $2 AND o.status = $3 ORDER BY o.opened_at DESC LIMIT 50"
-			rows, err = s.pool.Query(req.Context(), query, restID, branchID, status)
-		} else if branchID != "" {
-			query += " AND o.branch_id = $2 ORDER BY o.opened_at DESC LIMIT 50"
-			rows, err = s.pool.Query(req.Context(), query, restID, branchID)
-		} else {
-			query += " ORDER BY o.opened_at DESC LIMIT 50"
-			rows, err = s.pool.Query(req.Context(), query, restID)
-		}
+		rows, err := s.pool.Query(req.Context(), query, restID, branchID, claims.Role, claims.UserID, status)
 
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "FETCH_FAILED", err.Error(), nil)
@@ -1057,6 +1061,52 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 
 		updatedOrder, _ := s.GetOrderDetails(req.Context(), restID, orderID)
 		middleware.JSONSuccess(w, http.StatusOK, updatedOrder, nil)
+	})
+
+	r.Patch("/orders/{id}/status", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
+		orderID := chi.URLParam(req, "id")
+
+		var body struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", "A status is required", nil)
+			return
+		}
+
+		allowedStatuses := map[string]bool{
+			"picking": true, "packed": true, "dispatched": true, "delivered": true,
+		}
+		if !allowedStatuses[body.Status] {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_STATUS", "Unsupported fulfillment status", nil)
+			return
+		}
+
+		var branchID string
+		var updatedStatus string
+		err := s.pool.QueryRow(req.Context(), `
+			UPDATE orders
+			SET status = $1,
+				closed_at = CASE WHEN $1 = 'delivered' THEN NOW() ELSE closed_at END
+			WHERE id = $2 AND restaurant_id = $3 AND type IN ('delivery', 'pickup')
+			RETURNING branch_id::text, status
+		`, body.Status, orderID, restID).Scan(&branchID, &updatedStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			middleware.JSONError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "Fulfillment order not found", nil)
+			return
+		}
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "STATUS_UPDATE_FAILED", err.Error(), nil)
+			return
+		}
+
+		s.audit.Log(req.Context(), "UPDATE_FULFILLMENT_STATUS", "order", &orderID, nil, map[string]string{
+			"status": body.Status, "updated_by": claims.UserID,
+		}, "", "")
+		s.hub.BroadcastBranch(branchID, "order.fulfillment_status", map[string]string{"id": orderID, "status": body.Status})
+		middleware.JSONSuccess(w, http.StatusOK, map[string]string{"id": orderID, "status": updatedStatus}, nil)
 	})
 
 	r.Post("/orders/{id}/cancel", func(w http.ResponseWriter, req *http.Request) {

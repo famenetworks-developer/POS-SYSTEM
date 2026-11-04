@@ -80,7 +80,17 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 
 	r.Post("/shifts/{id}/cash-movements", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		shiftID := chi.URLParam(req, "id")
+		var permitted bool
+		_ = s.pool.QueryRow(req.Context(), `SELECT EXISTS (
+			SELECT 1 FROM shifts WHERE id = $1 AND restaurant_id = $2
+			AND ($3 <> 'cashier' OR cashier_id::text = $4)
+		)`, shiftID, restID, claims.Role, claims.UserID).Scan(&permitted)
+		if !permitted {
+			middleware.JSONError(w, http.StatusForbidden, "SHIFT_FORBIDDEN", "You may only manage your own shift", nil)
+			return
+		}
 
 		var body struct {
 			Type        string `json:"type"` // in, out
@@ -118,6 +128,7 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 
 	r.Post("/shifts/{id}/close", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		shiftID := chi.URLParam(req, "id")
 
 		var body struct {
@@ -131,7 +142,11 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 
 		var expectedCash int64
 		var branchID string
-		err := s.pool.QueryRow(req.Context(), "SELECT expected_cash_minor, branch_id FROM shifts WHERE id = $1 AND restaurant_id = $2 AND status = 'open'", shiftID, restID).Scan(&expectedCash, &branchID)
+		err := s.pool.QueryRow(req.Context(), `
+			SELECT expected_cash_minor, branch_id FROM shifts
+			WHERE id = $1 AND restaurant_id = $2 AND status = 'open'
+			AND ($3 <> 'cashier' OR cashier_id::text = $4)
+		`, shiftID, restID, claims.Role, claims.UserID).Scan(&expectedCash, &branchID)
 		if err != nil {
 			middleware.JSONError(w, http.StatusBadRequest, "SHIFT_NOT_FOUND_OR_CLOSED", err.Error(), nil)
 			return
@@ -163,16 +178,17 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 
 		s.audit.Log(req.Context(), "CLOSE_SHIFT", "shift", &shiftID, nil, body, "", "")
 		middleware.JSONSuccess(w, http.StatusOK, map[string]interface{}{
-			"id":                 shiftID,
-			"status":             "closed",
-			"expected_cash":      expectedCash,
-			"counted_cash":       body.CountedCashMinor,
-			"variance_minor":     variance,
+			"id":             shiftID,
+			"status":         "closed",
+			"expected_cash":  expectedCash,
+			"counted_cash":   body.CountedCashMinor,
+			"variance_minor": variance,
 		}, nil)
 	})
 
 	r.Get("/shifts", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		branchID := req.URL.Query().Get("branch_id")
 
 		query := `
@@ -182,10 +198,11 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 			FROM shifts s
 			JOIN users u ON s.cashier_id = u.id
 			WHERE s.restaurant_id = $1 AND ($2 = '' OR s.branch_id = $2::uuid)
+			  AND ($3 <> 'cashier' OR s.cashier_id::text = $4)
 			ORDER BY s.opened_at DESC
 			LIMIT 50
 		`
-		rows, err := s.pool.Query(req.Context(), query, restID, branchID)
+		rows, err := s.pool.Query(req.Context(), query, restID, branchID, claims.Role, claims.UserID)
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "FETCH_FAILED", err.Error(), nil)
 			return
@@ -208,6 +225,7 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 
 	r.Get("/shifts/{id}/report", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		shiftID := chi.URLParam(req, "id")
 
 		var sh models.Shift
@@ -218,7 +236,8 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 			FROM shifts s
 			JOIN users u ON s.cashier_id = u.id
 			WHERE s.id = $1 AND s.restaurant_id = $2
-		`, shiftID, restID).Scan(
+			  AND ($3 <> 'cashier' OR s.cashier_id::text = $4)
+		`, shiftID, restID, claims.Role, claims.UserID).Scan(
 			&sh.ID, &sh.RestaurantID, &sh.BranchID, &sh.CashierID, &sh.CashierName, &sh.TerminalID,
 			&sh.OpeningCashMinor, &sh.ExpectedCashMinor, &sh.CountedCashMinor, &sh.VarianceMinor,
 			&sh.Note, &sh.Status, &sh.OpenedAt, &sh.ClosedAt,

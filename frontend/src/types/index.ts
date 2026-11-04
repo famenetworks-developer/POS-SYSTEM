@@ -1,5 +1,6 @@
 export type Role =
   | 'super_admin'
+  | 'admin'
   | 'owner'
   | 'manager'
   | 'cashier'

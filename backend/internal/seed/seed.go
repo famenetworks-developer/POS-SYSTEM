@@ -47,6 +47,14 @@ func SeedDatabase(pool *pgxpool.Pool) error {
 	var productCount int
 	_ = pool.QueryRow(ctx, "SELECT COUNT(*) FROM menu_items WHERE brand != ''").Scan(&productCount)
 	if productCount >= 100 {
+		// RBAC demo identities must be reconciled even when catalogue data already exists.
+		adminPwd, _ := bcrypt.GenerateFromPassword([]byte("admin123"), 12)
+		_, _ = pool.Exec(ctx, `
+			INSERT INTO users (restaurant_id, name, email, phone, password_hash, role, discount_limit_pct, is_active)
+			SELECT id, 'Nusrat Jahan (Tenant Admin)', 'tenantadmin@novamart.com', '+8801700000001', $1, 'admin', 0, TRUE
+			FROM restaurants WHERE slug = 'novamart'
+			ON CONFLICT (email) DO UPDATE SET password_hash = $1, role = 'admin', restaurant_id = EXCLUDED.restaurant_id
+		`, string(adminPwd))
 		log.Println("[Seed] NovaMart supermarket database already seeded. Skipping initial seed.")
 		return nil
 	}
@@ -174,6 +182,7 @@ func SeedDatabase(pool *pgxpool.Pool) error {
 	purchPwd, _ := bcrypt.GenerateFromPassword([]byte("purchase123"), 12)
 	acctPwd, _ := bcrypt.GenerateFromPassword([]byte("accountant123"), 12)
 	delivPwd, _ := bcrypt.GenerateFromPassword([]byte("delivery123"), 12)
+	tenantAdminPwd, _ := bcrypt.GenerateFromPassword([]byte("admin123"), 12)
 
 	staffList := []struct {
 		name, email, role, pwd, pin string
@@ -186,6 +195,7 @@ func SeedDatabase(pool *pgxpool.Pool) error {
 		{"Zubair Ahmed (Purchase Officer)", "purchase@novamart.com", "purchase_manager", string(purchPwd), "4444", 5.0},
 		{"Farhana Yasmin (Chief Accountant)", "accountant@novamart.com", "accountant", string(acctPwd), "5555", 0.0},
 		{"Kamal Hossain (Delivery Associate)", "delivery@novamart.com", "delivery_staff", string(delivPwd), "6666", 0.0},
+		{"Nusrat Jahan (Tenant Admin)", "tenantadmin@novamart.com", "admin", string(tenantAdminPwd), "7777", 0.0},
 
 		// Aliases for backward compatibility
 		{"Sadia Rahman", "cashier@royalfeast.com", "cashier", string(cashierPwd), "2222", 10.0},
@@ -740,10 +750,10 @@ func getSupermarketProducts() []productSeed {
 		{25, "Stationery", "Fevicol", "Fevicol MR Squeeze Bottle All Purpose Glue", "ফেভিকল এমআর আঠা", "100 gm Bottle", "bottle", "STA-FEV-005", "894110010157", 6500, 5500, 4200, 85, false, false, false, false},
 
 		// Low Stock / Out of Stock Edge Cases for Testing Alerts
-		{0, "Daily Essentials", "Pure Life", "Pure Life Himalayan Pink Rock Salt", "হিমালয়ান পিঙ্ক রক সল্ট", "500 gm Jar", "jar", "ESS-PNK-007", "894110010158", 22000, 19500, 15000, 3, false, true, false, false}, // Low Stock (3 <= 10)
-		{8, "Beverages", "Twinings", "Twinings English Breakfast Tea Tin", "টুইনিংস ইংলিশ ব্রেকফাস্ট টি টিন", "100 gm Tin", "tin", "TEA-TWI-006", "894110010159", 65000, 59000, 49000, 4, false, false, false, false}, // Low Stock (4 <= 10)
+		{0, "Daily Essentials", "Pure Life", "Pure Life Himalayan Pink Rock Salt", "হিমালয়ান পিঙ্ক রক সল্ট", "500 gm Jar", "jar", "ESS-PNK-007", "894110010158", 22000, 19500, 15000, 3, false, true, false, false},              // Low Stock (3 <= 10)
+		{8, "Beverages", "Twinings", "Twinings English Breakfast Tea Tin", "টুইনিংস ইংলিশ ব্রেকফাস্ট টি টিন", "100 gm Tin", "tin", "TEA-TWI-006", "894110010159", 65000, 59000, 49000, 4, false, false, false, false},             // Low Stock (4 <= 10)
 		{10, "Snacks & Sweets", "Lindt", "Lindt Excellence 85% Dark Chocolate Cocoa", "লিন্ডট এক্সিলেন্স ৮৫% ডার্ক চকলেট", "100 gm Bar", "bar", "CHO-LIN-007", "894110010160", 45000, 41000, 34000, 0, false, false, true, false}, // Out of Stock (0)
-		{14, "Oils & Ghee", "Olitalia", "Olitalia Pomace Olive Oil Cooking Grade", "অলিটালিয়া পোমাস অলিভ অয়েল", "1 Litre Tin", "tin", "OIL-OLI-007", "894110010161", 145000, 135000, 115000, 0, false, false, false, false}, // Out of Stock (0)
-		{12, "Frozen Foods", "Kazi Farms", "Kazi Farms Chicken Shami Kebab", "কাজী ফার্মস চিকেন শামী কাবাব", "10 pcs Pack", "pack", "FRZ-KAZ-006", "894110010162", 26000, 23500, 19000, 5, false, true, false, false}, // Low Stock (5 <= 10)
+		{14, "Oils & Ghee", "Olitalia", "Olitalia Pomace Olive Oil Cooking Grade", "অলিটালিয়া পোমাস অলিভ অয়েল", "1 Litre Tin", "tin", "OIL-OLI-007", "894110010161", 145000, 135000, 115000, 0, false, false, false, false},     // Out of Stock (0)
+		{12, "Frozen Foods", "Kazi Farms", "Kazi Farms Chicken Shami Kebab", "কাজী ফার্মস চিকেন শামী কাবাব", "10 pcs Pack", "pack", "FRZ-KAZ-006", "894110010162", 26000, 23500, 19000, 5, false, true, false, false},             // Low Stock (5 <= 10)
 	}
 }

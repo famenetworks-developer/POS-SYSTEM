@@ -13,6 +13,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/golang-jwt/jwt/v5"
+	"restoflow/internal/approvals"
 	"restoflow/internal/audit"
 	"restoflow/internal/auth"
 	"restoflow/internal/config"
@@ -75,6 +76,7 @@ func main() {
 	reportService := reports.NewReportService(db.Pool)
 	platformAdminService := platform_admin.NewPlatformAdminService(db.Pool, cfg, auditService)
 	syncService := sync.NewSyncService(db.Pool, orderService)
+	approvalService := approvals.New(db.Pool, auditService)
 	scanService := scans.NewScanService(db.Pool, wsHub)
 
 	// Root Router
@@ -141,11 +143,14 @@ func main() {
 		// Protected endpoints
 		v1.Group(func(pr chi.Router) {
 			pr.Use(middleware.Auth(cfg.JWTAccessSecret))
+			pr.Use(middleware.RequirePermission(db.Pool))
+			pr.Use(middleware.EnforceBranchScope(db.Pool))
 
 			settingsService.MountRoutes(pr)
 			menuService.MountRoutes(pr)
 			tableService.MountRoutes(pr)
 			orderService.MountRoutes(pr)
+			approvalService.MountRoutes(pr)
 			shiftService.MountRoutes(pr)
 			inventoryService.MountRoutes(pr)
 			reportService.MountRoutes(pr)

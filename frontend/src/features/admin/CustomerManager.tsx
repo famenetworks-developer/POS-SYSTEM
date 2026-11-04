@@ -167,11 +167,12 @@ export const CustomerManager: React.FC = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by Mobile number (017..., 018...) or Customer Name..."
+              aria-label="Search customers"
             className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl pl-9 pr-4 py-2 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#0D5C3A]"
           />
         </div>
 
-        <div className="flex items-center gap-1.5 self-end sm:self-auto text-xs font-bold">
+        <div className="w-full sm:w-auto max-w-full flex items-center gap-1.5 self-stretch sm:self-auto text-xs font-bold overflow-x-auto pb-1 sm:pb-0">
           {['all', 'regular', 'silver', 'gold', 'vip'].map((tier) => (
             <button
               key={tier}

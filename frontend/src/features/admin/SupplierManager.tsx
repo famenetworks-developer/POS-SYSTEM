@@ -19,8 +19,9 @@ import {
 } from 'lucide-react';
 
 export const SupplierManager: React.FC = () => {
-  const { restaurant } = useAuth();
+  const { restaurant, user } = useAuth();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [purchaseOrders, setPurchaseOrders] = useState<any[]>([]);
   const [search, setSearch] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
@@ -35,8 +36,9 @@ export const SupplierManager: React.FC = () => {
   const loadSuppliers = async () => {
     setIsLoading(true);
     try {
-      const data = await api.get('/suppliers');
+      const [data, orders] = await Promise.all([api.get('/suppliers'), api.get('/purchase-orders')]);
       setSuppliers(data || []);
+      setPurchaseOrders(orders || []);
     } catch (e) {
       console.error(e);
     } finally {
@@ -94,13 +96,13 @@ export const SupplierManager: React.FC = () => {
           </p>
         </div>
 
-        <button
+        {user?.role !== 'admin' && <button
           onClick={() => setShowAddModal(true)}
           className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#0D5C3A] hover:bg-[#0A472D] text-white text-xs font-black shadow-sm self-start sm:self-auto transition-all"
         >
           <Plus className="w-4 h-4" />
           <span>Add New Supplier</span>
-        </button>
+        </button>}
       </div>
 
       {/* KPI Cards */}
@@ -138,14 +140,14 @@ export const SupplierManager: React.FC = () => {
 
         <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-sm">
           <div className="flex justify-between items-start">
-            <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Purchase Delivery SLA</span>
+            <span className="text-xs font-bold text-[#64748B] uppercase tracking-wider">Open Purchase Orders</span>
             <div className="p-2 rounded-xl bg-[#E0F2FE] text-[#0284C7] border border-[#BAE6FD]">
               <PackageCheck className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3">
-            <h3 className="text-2xl font-black text-[#0284C7]">98.4%</h3>
-            <p className="text-[11px] text-[#64748B] mt-1">On-time shelf replenishment</p>
+            <h3 className="text-2xl font-black text-[#0284C7]">{purchaseOrders.filter((po) => !['received', 'cancelled'].includes(po.status)).length}</h3>
+            <p className="text-[11px] text-[#64748B] mt-1">Awaiting approval, delivery or receiving</p>
           </div>
         </div>
       </div>
@@ -159,6 +161,7 @@ export const SupplierManager: React.FC = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by Vendor Name (Meghna, City Group, PRAN, Aarong, Unilever)..."
+              aria-label="Search suppliers"
             className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl pl-9 pr-4 py-2 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#0D5C3A]"
           />
         </div>
@@ -178,7 +181,7 @@ export const SupplierManager: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F1F5F9] text-[#0F172A]">
-              {filtered.map((s, idx) => (
+              {filtered.map((s) => (
                 <tr key={s.id} className="hover:bg-[#F8FAFC] transition-colors">
                   <td className="py-3 px-4">
                     <div className="font-extrabold text-[#0F172A] flex items-center gap-2">
@@ -198,7 +201,7 @@ export const SupplierManager: React.FC = () => {
 
                   <td className="py-3 px-4">
                     <span className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-[#F1F5F9] text-[#475569] border border-[#E2E8F0]">
-                      {idx % 2 === 0 ? 'Net 30 Days' : 'Net 15 Days'}
+                      Not configured
                     </span>
                   </td>
 

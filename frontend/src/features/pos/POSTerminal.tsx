@@ -73,6 +73,7 @@ export const POSTerminal: React.FC = () => {
   // Navigation & Search State
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'deals' | 'popular' | 'new'>('all');
+  const [showAllProducts, setShowAllProducts] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [scanFlash, setScanFlash] = useState<boolean>(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -477,18 +478,18 @@ export const POSTerminal: React.FC = () => {
     }
     try {
       // Find invoice from orders
-      const ordersList = await api.get('/orders');
+      const ordersList = await api.get(`/orders?branch_id=${activeBranch?.id || ''}`);
       const found = (ordersList || []).find((o: any) => o.order_no?.toString() === refundInvoiceInput.trim() || o.id === refundInvoiceInput.trim());
       if (!found) {
         alert('Invoice / Order not found in recent records.');
         return;
       }
-      await api.post(`/orders/${found.id}/refund`, {
+      await api.post(`/orders/${found.id}/refund-request`, {
         amount_minor: found.total_minor,
         reason: refundReason,
         restock: refundRestock,
       });
-      setRefundMessage(`Return processed successfully for Order #${found.order_no}`);
+      setRefundMessage(`Refund request submitted for Order #${found.order_no}. A Manager or Owner must approve it.`);
       loadData();
     } catch (err: any) {
       alert('Return failed: ' + err.message);
@@ -794,7 +795,14 @@ export const POSTerminal: React.FC = () => {
                 {quickFilter === 'deals' ? 'Hot deals' : quickFilter === 'new' ? 'New arrivals' : selectedCategory === 'all' ? 'Popular products' : categories.find((cat) => cat.id === selectedCategory)?.name_en || 'Products'}
               </h2>
             </div>
-            <button className="text-xs font-semibold text-[#171717]">View all</button>
+            <button
+              type="button"
+              onClick={() => setShowAllProducts((showAll) => !showAll)}
+              aria-pressed={showAllProducts}
+              className="min-h-[40px] px-3 rounded-lg text-xs font-semibold text-[#171717] hover:bg-white focus-visible:ring-2 focus-visible:ring-[#E21B70]"
+            >
+              {showAllProducts ? 'Show less' : 'View all'}
+            </button>
           </div>
           {filteredProducts.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-center p-6 text-[#94A3B8]">
@@ -803,7 +811,7 @@ export const POSTerminal: React.FC = () => {
               <p className="text-xs text-[#94A3B8] mt-1">Try another category, barcode, or brand name</p>
             </div>
           ) : (
-            <div className="product-shelf grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 sm:gap-3 min-w-0">
+            <div className={`product-shelf ${showAllProducts ? 'show-all' : ''} grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6 gap-2 sm:gap-3 min-w-0`}>
               {filteredProducts.map((p) => {
                 const inCart = cart.find((l) => l.product.id === p.id);
                 const hasDiscount = p.regular_price_minor && p.regular_price_minor > p.base_price_minor;
@@ -897,11 +905,13 @@ export const POSTerminal: React.FC = () => {
                           className="flex items-center gap-1 bg-[#0D5C3A] text-white rounded-lg p-0.5 shadow-sm"
                         >
                           <button
+                            type="button"
+                            aria-label={`Decrease ${p.name_en} quantity`}
                             onClick={() => {
                               const idx = cart.findIndex((l) => l.product.id === p.id);
                               if (idx >= 0) updateLineQty(idx, inCart.qty - 1);
                             }}
-                            className="w-5 h-5 flex items-center justify-center hover:bg-black/20 rounded"
+                            className="w-10 h-10 sm:w-7 sm:h-7 flex items-center justify-center hover:bg-black/20 rounded"
                           >
                             <Minus className="w-3 h-3" />
                           </button>
@@ -909,19 +919,23 @@ export const POSTerminal: React.FC = () => {
                             {inCart.qty}
                           </span>
                           <button
+                            type="button"
+                            aria-label={`Increase ${p.name_en} quantity`}
                             onClick={() => {
                               const idx = cart.findIndex((l) => l.product.id === p.id);
                               if (idx >= 0) updateLineQty(idx, inCart.qty + 1);
                             }}
-                            className="w-5 h-5 flex items-center justify-center hover:bg-black/20 rounded"
+                            className="w-10 h-10 sm:w-7 sm:h-7 flex items-center justify-center hover:bg-black/20 rounded"
                           >
                             <Plus className="w-3 h-3" />
                           </button>
                         </div>
                       ) : (
                         <button
+                          type="button"
+                          aria-label={isOutOfStock ? `${p.name_en} is out of stock` : `Add ${p.name_en} to cart`}
                           disabled={isOutOfStock}
-                          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                          className={`w-10 h-10 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center transition-all ${
                             isOutOfStock
                               ? 'bg-gray-100 text-gray-400'
                               : 'bg-[#E6F4EA] text-[#0D5C3A] hover:bg-[#0D5C3A] hover:text-white shadow-sm'
@@ -1090,6 +1104,7 @@ export const POSTerminal: React.FC = () => {
               value={couponCodeInput}
               onChange={(e) => setCouponCodeInput(e.target.value.toUpperCase())}
               placeholder="COUPON (e.g. NOVAFIRST)"
+              aria-label="Promotion coupon code"
               className="flex-1 bg-white border border-[#CBD5E1] rounded-lg px-2.5 py-1 text-xs font-mono font-bold uppercase text-[#0D5C3A] focus:outline-none focus:ring-1 focus:ring-[#0D5C3A]"
             />
             <button

@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { getLanguage, setLanguage, t } from '../../lib/i18n';
 import { cacheBootstrapData, syncOutbox } from '../../offline/sync';
-import { SCAN_BARCODE_ROLES } from '../../lib/access';
+import { canAccess } from '../../lib/rbac';
 import {
   ShoppingBag,
   ShoppingCart,
@@ -32,6 +32,7 @@ export const Navbar: React.FC = () => {
   const location = useLocation();
   const [lang, setLangState] = useState(getLanguage());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [syncStatus, setSyncStatus] = useState<'online' | 'offline' | 'syncing'>(
     navigator.onLine ? 'online' : 'offline'
   );
@@ -39,7 +40,12 @@ export const Navbar: React.FC = () => {
 
   useEffect(() => {
     setMobileMenuOpen(false);
+    setBranchMenuOpen(false);
   }, [location.pathname]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang === 'bn' ? 'bn' : 'en';
+  }, [lang]);
 
   useEffect(() => {
     const handleSync = (e: any) => {
@@ -71,6 +77,7 @@ export const Navbar: React.FC = () => {
   const toggleLanguage = () => {
     const next = lang === 'en' ? 'bn' : 'en';
     setLanguage(next);
+    setLangState(next);
   };
 
   const handleManualSync = async () => {
@@ -81,23 +88,41 @@ export const Navbar: React.FC = () => {
     }
     setSyncStatus('syncing');
     setSyncMessage('Syncing pending changes...');
-    const result = await syncOutbox();
-    await cacheBootstrapData(activeBranch?.id);
-    setSyncStatus('online');
-    setSyncMessage(
-      result.failed > 0
-        ? `${result.failed} change${result.failed === 1 ? '' : 's'} could not sync`
-        : result.synced > 0
-        ? `${result.synced} change${result.synced === 1 ? '' : 's'} synced`
-        : 'Everything is up to date'
-    );
+    try {
+      const result = await syncOutbox();
+      await cacheBootstrapData(activeBranch?.id);
+      setSyncStatus(result.failed > 0 ? 'offline' : 'online');
+      setSyncMessage(
+        result.failed > 0
+          ? `${result.failed} change${result.failed === 1 ? '' : 's'} could not sync`
+          : result.synced > 0
+          ? `${result.synced} change${result.synced === 1 ? '' : 's'} synced`
+          : 'Everything is up to date'
+      );
+    } catch (error) {
+      console.error('[Navbar] Manual sync failed', error);
+      setSyncStatus(navigator.onLine ? 'online' : 'offline');
+      setSyncMessage('Sync failed. Please try again.');
+    }
   };
 
+  const backOfficePath = user?.role === 'inventory_manager'
+    ? '/admin/inventory'
+    : user?.role === 'purchase_manager'
+      ? '/admin/suppliers'
+      : user?.role === 'accountant'
+        ? '/admin/reports'
+        : user?.role === 'admin'
+          ? '/admin/administration'
+        : user?.role === 'cashier'
+          ? '/admin/shifts'
+          : '/admin';
+
   const navItems = [
-    { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['owner', 'manager', 'cashier', 'delivery_staff', 'super_admin'] },
-    { path: '/fulfillment', label: t('fulfillment'), icon: Truck, roles: ['owner', 'manager', 'delivery_staff', 'cashier', 'super_admin'] },
-    { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'manager', 'cashier', 'super_admin'] },
-    { path: '/admin', label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'manager', 'inventory_manager', 'purchase_manager', 'accountant', 'super_admin'] },
+    { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['owner', 'manager', 'cashier'] },
+    { path: '/fulfillment', label: t('fulfillment'), icon: Truck, roles: ['owner', 'manager', 'delivery_staff'] },
+    { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'manager'] },
+    { path: backOfficePath, label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'cashier', 'inventory_manager', 'purchase_manager', 'accountant'] },
   ];
 
   if (user?.role === 'super_admin') {
@@ -114,6 +139,7 @@ export const Navbar: React.FC = () => {
       case 'accountant': return 'Accountant';
       case 'delivery_staff': return 'Delivery Staff';
       case 'super_admin': return 'Super Admin';
+      case 'admin': return 'Tenant Admin';
       default: return role || 'Staff';
     }
   };
@@ -121,13 +147,13 @@ export const Navbar: React.FC = () => {
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-[#E3E6E8] text-[#2E3138] shadow-sm select-none">
       <div className="storefront-promo-bar">
-        <div className="max-w-[1680px] mx-auto h-11 px-4 flex items-center justify-center gap-3">
+        <div className="max-w-[1680px] mx-auto min-h-11 px-2 sm:px-4 py-1 flex items-center justify-center gap-1.5 sm:gap-3">
           <div className="hidden sm:flex w-8 h-8 rounded-lg border border-white/50 items-center justify-center"><ShoppingBag className="w-4 h-4" /></div>
           <Link to="/register?type=partner" className="promo-outline-button" aria-label="Create a supermarket partner account">
-            <Store className="w-3.5 h-3.5" /> Sign up to be a supermarket partner
+            <Store className="w-3.5 h-3.5" /> <span className="sm:hidden">Partner account</span><span className="hidden sm:inline">Sign up to be a supermarket partner</span>
           </Link>
           <Link to="/register?type=business" className="promo-outline-button" aria-label="Create a business account">
-            <Building2 className="w-3.5 h-3.5" /> Sign up for a business account
+            <Building2 className="w-3.5 h-3.5" /> <span className="sm:hidden">Business account</span><span className="hidden sm:inline">Sign up for a business account</span>
           </Link>
         </div>
       </div>
@@ -147,17 +173,27 @@ export const Navbar: React.FC = () => {
 
           {/* Desktop Branch Switcher */}
           {branches.length > 0 && (
-            <div className="relative group hidden sm:block">
-              <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-[#CBD5E1] text-xs font-bold text-[#334155] transition-colors">
+            <div className="relative hidden sm:block">
+              <button
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={branchMenuOpen}
+                onClick={() => setBranchMenuOpen((open) => !open)}
+                className="flex items-center gap-1.5 px-3 py-1.5 min-h-[40px] rounded-lg bg-[#F8FAFC] hover:bg-[#F1F5F9] border border-[#CBD5E1] text-xs font-bold text-[#334155] transition-colors"
+              >
                 <span className="truncate max-w-[140px]">{activeBranch?.name || 'Select Outlet'}</span>
                 <ChevronDown className="w-3.5 h-3.5 text-[#94A3B8] shrink-0" />
               </button>
-              {branches.length > 1 && (
-                <div className="absolute top-full left-0 mt-1 w-56 py-1 bg-white border border-[#CBD5E1] rounded-xl shadow-xl hidden group-hover:block z-50">
+              {branches.length > 1 && branchMenuOpen && (
+                <div role="menu" className="absolute top-full left-0 mt-1 w-56 py-1 bg-white border border-[#CBD5E1] rounded-xl shadow-xl z-50">
                   {branches.map((b) => (
                     <button
                       key={b.id}
-                      onClick={() => setActiveBranch(b)}
+                      onClick={() => {
+                        setActiveBranch(b);
+                        setBranchMenuOpen(false);
+                      }}
+                      role="menuitem"
                       className={`w-full text-left px-3.5 py-2 text-xs transition-colors flex items-center justify-between ${
                         activeBranch?.id === b.id ? 'bg-[#E6F4EA] text-[#0D5C3A] font-bold' : 'text-[#334155] hover:bg-[#F1F5F9]'
                       }`}
@@ -170,14 +206,14 @@ export const Navbar: React.FC = () => {
               )}
             </div>
           )}
-          <div className="hidden xl:flex items-center gap-4 text-sm text-[#2E3138] font-medium">
+          <div className="hidden 2xl:flex items-center gap-4 text-sm text-[#2E3138] font-medium">
             <span className="inline-flex items-center gap-1.5"><MapPin className="w-4 h-4" /> New address · Select your address</span>
             <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4" /> Time · Standard</span>
           </div>
         </div>
 
         {/* Desktop Navigation Tabs */}
-        <nav className="hidden">
+        <nav className="hidden xl:flex items-center gap-1">
           {navItems.filter((item) => !user || item.roles.includes(user.role)).map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname.startsWith(item.path);
@@ -200,7 +236,7 @@ export const Navbar: React.FC = () => {
 
         {/* Right Actions: Shift Indicator, Sync, Language, User, Logout */}
         <div className="flex items-center gap-2 sm:gap-3">
-          {user && SCAN_BARCODE_ROLES.includes(user.role) && (
+          {canAccess(user?.role, 'scan') && (
             <Link
               to="/scan"
               title="Scan barcode"
@@ -238,7 +274,7 @@ export const Navbar: React.FC = () => {
             aria-label={`${syncStatus}. ${syncMessage}. Sync now`}
             aria-live="polite"
             disabled={syncStatus === 'syncing'}
-            className={`flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-full text-[10px] sm:text-[11px] font-bold border shrink-0 ${
+            className={`flex items-center gap-1 sm:gap-1.5 min-h-[36px] px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-bold border shrink-0 ${
               syncStatus === 'online'
                 ? 'bg-[#E6F4EA] text-[#0D5C3A] border-[#B7E1CD]'
                 : syncStatus === 'syncing'
@@ -267,9 +303,11 @@ export const Navbar: React.FC = () => {
           {/* Language Toggle */}
           <button
             data-navbar-language
+            type="button"
             onClick={toggleLanguage}
             title="Toggle English / বাংলা"
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] border border-[#CBD5E1] text-xs font-bold text-[#334155] transition-colors"
+            aria-label={`Switch language to ${lang === 'en' ? 'Bangla' : 'English'}`}
+            className="flex items-center gap-1 min-h-[36px] px-2.5 py-1.5 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] border border-[#CBD5E1] text-xs font-bold text-[#334155] transition-colors"
           >
             <Globe className="w-3.5 h-3.5 text-[#0D5C3A]" />
             <span>{lang === 'en' ? 'বাংলা' : 'EN'}</span>
@@ -293,17 +331,22 @@ export const Navbar: React.FC = () => {
           {/* Logout Button */}
           <button
             data-navbar-logout
+            type="button"
             onClick={logout}
             title={t('logout')}
-            className="p-2 rounded-xl text-[#64748B] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"
+            aria-label={t('logout')}
+            className="w-10 h-10 flex items-center justify-center rounded-xl text-[#64748B] hover:text-[#DC2626] hover:bg-[#FEE2E2] transition-colors"
           >
             <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
           {/* Mobile hamburger menu toggle */}
           <button
+            type="button"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-2 rounded-xl text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+            aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+            aria-expanded={mobileMenuOpen}
+            className="md:hidden w-11 h-11 flex items-center justify-center rounded-xl text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
@@ -313,6 +356,21 @@ export const Navbar: React.FC = () => {
       {/* Mobile Drawer Menu */}
       {mobileMenuOpen && (
         <div className="md:hidden border-t border-[#E2E8F0] bg-white px-4 py-3 space-y-2">
+          {branches.length > 0 && (
+            <label className="block text-xs font-bold text-[#475569]">
+              <span className="block mb-1.5">Active outlet</span>
+              <select
+                value={activeBranch?.id || ''}
+                onChange={(event) => {
+                  const branch = branches.find((item) => item.id === event.target.value);
+                  if (branch) setActiveBranch(branch);
+                }}
+                className="w-full min-h-[44px] rounded-xl border border-[#CBD5E1] bg-white px-3 text-base text-[#334155]"
+              >
+                {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+              </select>
+            </label>
+          )}
           {navItems.filter((item) => !user || item.roles.includes(user.role)).map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname.startsWith(item.path);
@@ -329,6 +387,24 @@ export const Navbar: React.FC = () => {
               </Link>
             );
           })}
+          <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#E2E8F0]">
+            <button
+              type="button"
+              onClick={handleManualSync}
+              disabled={syncStatus === 'syncing'}
+              className="min-h-[44px] rounded-xl border border-[#CBD5E1] flex items-center justify-center gap-2 text-xs font-bold text-[#334155] disabled:opacity-60"
+            >
+              {syncStatus === 'syncing' ? <RefreshCw className="w-4 h-4 animate-spin" /> : syncStatus === 'offline' ? <WifiOff className="w-4 h-4" /> : <Wifi className="w-4 h-4" />}
+              {syncStatus === 'syncing' ? 'Syncing' : syncStatus === 'offline' ? 'Offline' : 'Online'}
+            </button>
+            <button
+              type="button"
+              onClick={toggleLanguage}
+              className="min-h-[44px] rounded-xl border border-[#CBD5E1] flex items-center justify-center gap-2 text-xs font-bold text-[#334155]"
+            >
+              <Globe className="w-4 h-4" /> {lang === 'en' ? 'বাংলা' : 'English'}
+            </button>
+          </div>
         </div>
       )}
     </header>

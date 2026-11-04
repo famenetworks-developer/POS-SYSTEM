@@ -124,10 +124,13 @@ func (s *SettingsService) MountRoutes(r chi.Router) {
 	// Branches
 	r.Get("/branches", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
 		rows, err := s.pool.Query(req.Context(), `
 			SELECT id, restaurant_id, name, address, phone, is_active, invoice_prefix, created_at, updated_at
-			FROM branches WHERE restaurant_id = $1 ORDER BY created_at ASC
-		`, restID)
+			FROM branches b WHERE restaurant_id = $1
+			AND ($2 IN ('owner','admin','accountant') OR EXISTS(SELECT 1 FROM user_branches ub WHERE ub.user_id=$3 AND ub.branch_id=b.id))
+			ORDER BY created_at ASC
+		`, restID, claims.Role, claims.UserID)
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "FETCH_FAILED", err.Error(), nil)
 			return

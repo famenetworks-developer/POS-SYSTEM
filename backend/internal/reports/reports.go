@@ -214,7 +214,7 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			trendRows.Close()
 		}
 
-		middleware.JSONSuccess(w, http.StatusOK, map[string]interface{}{
+		result := map[string]interface{}{
 			"today_sales_minor":    todaySalesMinor,
 			"today_orders":         todayOrders,
 			"today_avg_bill_minor": todayAvgBillMinor,
@@ -230,7 +230,16 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			"low_stock":            lowStock,
 			"payment_mix":          paymentMix,
 			"sales_trend":          trend,
-		}, nil)
+		}
+		// Branch managers get operational sales data, not Owner-level P&L.
+		if middleware.GetUserClaims(req.Context()).Role == "manager" {
+			delete(result, "month_cogs_minor")
+			delete(result, "month_gross_profit")
+			delete(result, "month_expenses_minor")
+			delete(result, "month_net_profit")
+			delete(result, "month_margin_pct")
+		}
+		middleware.JSONSuccess(w, http.StatusOK, result, nil)
 	})
 
 	// Profit & Loss Report
@@ -322,20 +331,20 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 		}
 
 		middleware.JSONSuccess(w, http.StatusOK, map[string]interface{}{
-			"start_date":          startDate,
-			"end_date":            endDate,
-			"gross_sales_minor":   grossSalesMinor,
-			"vat_minor":           vatMinor,
-			"refunds_minor":       refundsMinor,
-			"revenue_net_minor":   revenueNet,
-			"cogs_minor":          cogsMinor,
-			"wastage_minor":       wastageMinor,
-			"gross_profit_minor":  grossProfit,
-			"expenses_minor":      totalExpensesMinor,
-			"expenses_breakdown":  expensesBreakdown,
-			"net_profit_minor":    netProfit,
-			"margin_pct":          marginPct,
-			"orders_count":        ordersCount,
+			"start_date":         startDate,
+			"end_date":           endDate,
+			"gross_sales_minor":  grossSalesMinor,
+			"vat_minor":          vatMinor,
+			"refunds_minor":      refundsMinor,
+			"revenue_net_minor":  revenueNet,
+			"cogs_minor":         cogsMinor,
+			"wastage_minor":      wastageMinor,
+			"gross_profit_minor": grossProfit,
+			"expenses_minor":     totalExpensesMinor,
+			"expenses_breakdown": expensesBreakdown,
+			"net_profit_minor":   netProfit,
+			"margin_pct":         marginPct,
+			"orders_count":       ordersCount,
 		}, nil)
 	})
 

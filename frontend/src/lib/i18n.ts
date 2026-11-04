@@ -269,6 +269,7 @@ export const getLanguage = (): Language => {
 
 export const setLanguage = (lang: Language): void => {
   localStorage.setItem('novamart_language', lang);
+  document.documentElement.lang = lang === 'bn' ? 'bn' : 'en';
   window.dispatchEvent(new Event('languagechange'));
 };
 

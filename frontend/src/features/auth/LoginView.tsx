@@ -257,7 +257,7 @@ export const LoginView: React.FC = () => {
               Purchase
             </button>
             <button
-              onClick={() => fillQuickDemo('admin@novamart.com', 'admin123')}
+              onClick={() => fillQuickDemo('tenantadmin@novamart.com', 'admin123')}
               className="px-2 py-1.5 rounded-lg bg-[#F1F5F9] hover:bg-[#E2E8F0] text-[#0F172A] text-[10px] font-extrabold border border-[#E2E8F0] text-center"
             >
               Admin

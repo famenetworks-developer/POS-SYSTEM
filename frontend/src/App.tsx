@@ -20,9 +20,11 @@ import { StaffManager } from './features/admin/StaffManager';
 import { ShiftManager } from './features/admin/ShiftManager';
 import { SettingsView } from './features/admin/SettingsView';
 import { PlatformAdmin } from './features/platform/PlatformAdmin';
+import { TenantAdminDashboard } from './features/admin/TenantAdminDashboard';
+import { AccessDenied } from './features/auth/AccessDenied';
+import { ApprovalQueue } from './features/admin/ApprovalQueue';
 import { BarcodeScanView } from './features/scan/BarcodeScanView';
-import { SCAN_BARCODE_ROLES } from './lib/access';
-import type { Role } from './types';
+import { AppArea, canAccess, homeForRole } from './lib/rbac';
 
 const ProtectedLayout: React.FC = () => {
   const { isAuthenticated, isLoading } = useAuth();
@@ -50,19 +52,14 @@ const ProtectedLayout: React.FC = () => {
   );
 };
 
-const RequireRoles: React.FC<{ roles: readonly Role[]; children: React.ReactNode }> = ({ roles, children }) => {
+const RoleRoute: React.FC<{ area: AppArea; children: React.ReactNode }> = ({ area, children }) => {
   const { user } = useAuth();
+  return canAccess(user?.role, area) ? <>{children}</> : <Navigate to="/access-denied" replace />;
+};
 
-  if (!user || !roles.includes(user.role)) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-        <h1 className="text-lg font-bold text-[#0F172A]">You don't have access to this page</h1>
-        <p className="text-sm text-[#64748B]">Ask an administrator if you need access.</p>
-      </div>
-    );
-  }
-
-  return <>{children}</>;
+const HomeRoute: React.FC = () => {
+  const { user } = useAuth();
+  return <Navigate to={homeForRole(user?.role)} replace />;
 };
 
 export const App: React.FC = () => {
@@ -76,49 +73,52 @@ export const App: React.FC = () => {
 
           {/* Protected Application Routes */}
           <Route element={<ProtectedLayout />}>
+            <Route path="/access-denied" element={<AccessDenied />} />
             {/* POS Checkout Terminal */}
-            <Route path="/pos" element={<POSTerminal />} />
+            <Route path="/pos" element={<RoleRoute area="pos"><POSTerminal /></RoleRoute>} />
 
             {/* Order Fulfillment & Delivery Picking */}
-            <Route path="/fulfillment" element={<FulfillmentView />} />
+            <Route path="/fulfillment" element={<RoleRoute area="fulfillment"><FulfillmentView /></RoleRoute>} />
             <Route path="/kds" element={<Navigate to="/fulfillment" replace />} />
 
             {/* Floor Assistant & Price Checker */}
-            <Route path="/assistant" element={<FloorAssistantView />} />
+            <Route path="/assistant" element={<RoleRoute area="assistant"><FloorAssistantView /></RoleRoute>} />
             <Route path="/waiter" element={<Navigate to="/assistant" replace />} />
 
             {/* Barcode lookup (camera, USB scanner or typed code) */}
-            <Route path="/scan" element={<RequireRoles roles={SCAN_BARCODE_ROLES}><BarcodeScanView /></RequireRoles>} />
+            <Route path="/scan" element={<RoleRoute area="scan"><BarcodeScanView /></RoleRoute>} />
 
             {/* Standalone Registers view */}
-            <Route path="/registers" element={<RegisterManager />} />
+            <Route path="/registers" element={<RoleRoute area="registers"><RegisterManager /></RoleRoute>} />
             <Route path="/tables" element={<Navigate to="/registers" replace />} />
 
             {/* Back Office Admin Routes */}
             <Route path="/admin" element={<AdminLayout />}>
-              <Route index element={<AdminDashboard />} />
-              <Route path="products" element={<ProductManager />} />
+              <Route index element={<RoleRoute area="dashboard"><AdminDashboard /></RoleRoute>} />
+              <Route path="administration" element={<RoleRoute area="administration"><TenantAdminDashboard /></RoleRoute>} />
+              <Route path="approvals" element={<RoleRoute area="approvals"><ApprovalQueue /></RoleRoute>} />
+              <Route path="products" element={<RoleRoute area="products"><ProductManager /></RoleRoute>} />
               <Route path="menu" element={<Navigate to="/admin/products" replace />} />
-              <Route path="registers" element={<RegisterManager />} />
+              <Route path="registers" element={<RoleRoute area="registers"><RegisterManager /></RoleRoute>} />
               <Route path="tables" element={<Navigate to="/admin/registers" replace />} />
-              <Route path="inventory" element={<InventoryManager />} />
-              <Route path="sales" element={<SalesManager />} />
-              <Route path="customers" element={<CustomerManager />} />
-              <Route path="suppliers" element={<SupplierManager />} />
-              <Route path="reports" element={<ReportsView />} />
-              <Route path="staff" element={<StaffManager />} />
-              <Route path="shifts" element={<ShiftManager />} />
-              <Route path="settings" element={<SettingsView />} />
+              <Route path="inventory" element={<RoleRoute area="inventory"><InventoryManager /></RoleRoute>} />
+              <Route path="sales" element={<RoleRoute area="sales"><SalesManager /></RoleRoute>} />
+              <Route path="customers" element={<RoleRoute area="customers"><CustomerManager /></RoleRoute>} />
+              <Route path="suppliers" element={<RoleRoute area="purchases"><SupplierManager /></RoleRoute>} />
+              <Route path="reports" element={<RoleRoute area="reports"><ReportsView /></RoleRoute>} />
+              <Route path="staff" element={<RoleRoute area="staff"><StaffManager /></RoleRoute>} />
+              <Route path="shifts" element={<RoleRoute area="shifts"><ShiftManager /></RoleRoute>} />
+              <Route path="settings" element={<RoleRoute area="settings"><SettingsView /></RoleRoute>} />
             </Route>
 
             {/* Super Admin Platform Console */}
-            <Route path="/platform" element={<PlatformAdmin />} />
+            <Route path="/platform" element={<RoleRoute area="platform"><PlatformAdmin /></RoleRoute>} />
 
             {/* Default root fallback */}
-            <Route path="/" element={<Navigate to="/pos" replace />} />
+            <Route path="/" element={<HomeRoute />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/pos" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </BrowserRouter>
     </AuthProvider>

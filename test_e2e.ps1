@@ -1,3 +1,4 @@
+$ErrorActionPreference = "Stop"
 $baseUrl = "http://localhost:8080/api/v1"
 Write-Host "==========================================================" -ForegroundColor Green
 Write-Host "   NovaMart Premium Super Shop POS & Retail Verification" -ForegroundColor Green
@@ -95,11 +96,15 @@ $refundBody = @{
     restock = $true
 } | ConvertTo-Json
 
-$refundRes = Invoke-RestMethod -Uri "$baseUrl/orders/$orderId/refund" -Method Post -Body $refundBody -Headers $headers
-Write-Host "11. Refund & Restock completed: Status: $($refundRes.data.status), Amount: ৳ $($refundRes.data.amount_minor / 100)" -ForegroundColor Green
+$refundRequest = Invoke-RestMethod -Uri "$baseUrl/orders/$orderId/refund-request" -Method Post -Body $refundBody -Headers $headers
+$managerLogin = Invoke-RestMethod -Uri "$baseUrl/auth/login" -Method Post -ContentType "application/json" -Body (@{ email = "manager@novamart.com"; password = "manager123" } | ConvertTo-Json)
+$managerHeaders = @{ Authorization = "Bearer $($managerLogin.data.access_token)"; "Content-Type" = "application/json" }
+$decisionBody = @{ decision = "approved"; note = "Return inspected and approved by branch manager" } | ConvertTo-Json
+$refundRes = Invoke-RestMethod -Uri "$baseUrl/approvals/$($refundRequest.data.id)/decision" -Method Post -Body $decisionBody -Headers $managerHeaders
+Write-Host "11. Refund workflow completed: Request: $($refundRequest.data.status), Decision: $($refundRes.data.status)" -ForegroundColor Green
 
 # 12. Retail Executive Dashboard
-$dash = Invoke-RestMethod -Uri "$baseUrl/reports/dashboard?branch_id=$branchId" -Method Get -Headers $headers
+$dash = Invoke-RestMethod -Uri "$baseUrl/reports/dashboard?branch_id=$branchId" -Method Get -Headers $managerHeaders
 Write-Host "12. Executive Dashboard: Invoiced Sales: ৳ $($dash.data.today_sales_minor / 100), Receipts: $($dash.data.today_orders)" -ForegroundColor Green
 
 Write-Host "`n==========================================================" -ForegroundColor Green

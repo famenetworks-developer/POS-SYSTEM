@@ -203,6 +203,7 @@ export const InventoryManager: React.FC = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by Barcode, SKU, Brand (Fresh, Teer), or Product Name..."
+              aria-label="Search inventory"
             className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl pl-9 pr-4 py-2 text-xs text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#0D5C3A]"
           />
         </div>

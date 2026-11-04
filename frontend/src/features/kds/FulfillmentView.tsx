@@ -24,6 +24,8 @@ export const FulfillmentView: React.FC = () => {
   const [selectedTab, setSelectedTab] = useState<'all' | 'delivery' | 'pickup'>('all');
   const [now, setNow] = useState<number>(Date.now());
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [updatingOrderId, setUpdatingOrderId] = useState<string>('');
+  const [actionError, setActionError] = useState<string>('');
 
   const playChime = () => {
     try {
@@ -71,11 +73,44 @@ export const FulfillmentView: React.FC = () => {
     };
   }, [activeBranch]);
 
-  const filtered = orders.filter((o) => {
+  const fulfillmentOrders = orders.filter((order) =>
+    ['delivery', 'pickup'].includes(order.type) && !['delivered', 'cancelled', 'refunded'].includes(order.status)
+  );
+
+  const filtered = fulfillmentOrders.filter((o) => {
     if (selectedTab === 'delivery') return o.type === 'delivery';
     if (selectedTab === 'pickup') return o.type === 'pickup';
     return true;
   });
+
+  const nextStatus = (order: any) => {
+    if (order.status === 'picking') return 'packed';
+    if (order.status === 'packed') return order.type === 'delivery' ? 'dispatched' : 'delivered';
+    if (order.status === 'dispatched') return 'delivered';
+    return 'picking';
+  };
+
+  const actionLabel = (order: any) => {
+    const status = nextStatus(order);
+    if (status === 'picking') return 'Start picking';
+    if (status === 'packed') return 'Mark packed';
+    if (status === 'dispatched') return 'Dispatch order';
+    return 'Mark delivered';
+  };
+
+  const advanceOrder = async (order: any) => {
+    const status = nextStatus(order);
+    setUpdatingOrderId(order.id);
+    setActionError('');
+    try {
+      await api.patch(`/orders/${order.id}/status`, { status });
+      setOrders((current) => current.map((item) => item.id === order.id ? { ...item, status } : item));
+    } catch (error: any) {
+      setActionError(error?.message || 'Could not update the order. Please try again.');
+    } finally {
+      setUpdatingOrderId('');
+    }
+  };
 
   return (
     <div className="app-content-height flex-1 flex flex-col bg-[#F8FAFC] overflow-hidden">
@@ -106,7 +141,7 @@ export const FulfillmentView: React.FC = () => {
                 selectedTab === 'all' ? 'bg-white text-[#0D5C3A] shadow-xs' : 'hover:text-[#0D5C3A]'
               }`}
             >
-              All Orders ({orders.length})
+              All Orders ({fulfillmentOrders.length})
             </button>
             <button
               onClick={() => setSelectedTab('delivery')}
@@ -129,8 +164,10 @@ export const FulfillmentView: React.FC = () => {
           </div>
 
           <button
+            type="button"
             onClick={loadOrders}
-            className="p-2 rounded-xl bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569]"
+            aria-label="Refresh fulfillment orders"
+            className="w-11 h-11 flex items-center justify-center rounded-xl bg-white border border-[#E2E8F0] hover:bg-[#F8FAFC] text-[#475569]"
           >
             <RefreshCw className="w-4 h-4" />
           </button>
@@ -139,6 +176,11 @@ export const FulfillmentView: React.FC = () => {
 
       {/* Orders Grid */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+        {actionError && (
+          <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {actionError}
+          </div>
+        )}
         {filtered.length === 0 ? (
           <div className="h-64 flex flex-col items-center justify-center text-[#94A3B8]">
             <Package className="w-12 h-12 text-[#CBD5E1] mb-2" />
@@ -164,7 +206,7 @@ export const FulfillmentView: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span className="font-extrabold text-xs text-[#0F172A]">Order #{o.order_no}</span>
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-[#E6F4EA] text-[#0D5C3A]">
-                          {o.type === 'delivery' ? 'Home Delivery' : o.type === 'pickup' ? 'Store Pickup' : 'Express POS'}
+                          {o.status || (o.type === 'delivery' ? 'Home Delivery' : 'Store Pickup')}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 text-[11px] font-bold text-[#64748B]">
@@ -202,11 +244,13 @@ export const FulfillmentView: React.FC = () => {
                   {/* Actions */}
                   <div className="pt-3 mt-3 border-t border-[#F1F5F9] flex gap-2">
                     <button
-                      onClick={() => alert(`Order #${o.order_no} marked as Picked & Ready!`)}
-                      className="flex-1 py-2 rounded-xl bg-[#0D5C3A] hover:bg-[#0A472D] text-white text-xs font-black shadow-xs flex items-center justify-center gap-1"
+                      type="button"
+                      onClick={() => advanceOrder(o)}
+                      disabled={updatingOrderId === o.id}
+                      className="flex-1 min-h-[44px] py-2 rounded-xl bg-[#0D5C3A] hover:bg-[#0A472D] text-white text-xs font-black shadow-xs flex items-center justify-center gap-1 disabled:opacity-60 disabled:cursor-wait"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Ready / Dispatched</span>
+                      <span>{updatingOrderId === o.id ? 'Updating...' : actionLabel(o)}</span>
                     </button>
                   </div>
                 </div>

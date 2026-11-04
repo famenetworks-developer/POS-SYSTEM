@@ -53,7 +53,7 @@ export const PlatformAdmin: React.FC = () => {
   };
 
   return (
-    <div className="p-3.5 sm:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="w-full min-w-0 p-3.5 sm:p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-xl sm:text-2xl font-black text-[#0A3420] flex items-center gap-2">
@@ -74,7 +74,7 @@ export const PlatformAdmin: React.FC = () => {
       </div>
 
       {/* Tenants Table */}
-      <div className="bg-white border border-[#E3E8DE] rounded-2xl overflow-hidden shadow-sm">
+      <div className="w-full min-w-0 bg-white border border-[#E3E8DE] rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs min-w-[700px]">
             <thead className="bg-[#FAFBF9] text-[#5E7568] font-bold border-b border-[#E3E8DE]">

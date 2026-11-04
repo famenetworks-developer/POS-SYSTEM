@@ -79,6 +79,7 @@ export const FloorAssistantView: React.FC = () => {
             value={query}
             onChange={(e) => handleSearch(e.target.value)}
             placeholder="Scan barcode (e.g. 894110010001) or type..."
+              aria-label="Scan or search for a product"
             className="w-full bg-[#F8FAFC] border-2 border-[#0D5C3A]/30 focus:border-[#0D5C3A] rounded-2xl pl-10 pr-4 py-3 text-sm font-mono font-bold text-[#0F172A] focus:outline-none shadow-sm"
           />
         </div>

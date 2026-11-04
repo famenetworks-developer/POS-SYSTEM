@@ -3,6 +3,7 @@ package orders
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -623,13 +624,13 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	}, "", "")
 
 	return map[string]interface{}{
-		"order_id":      orderID,
-		"invoice_no":    invoiceNo,
-		"status":        "paid",
-		"total_minor":   totalMinor,
-		"paid_minor":    newPaidMinor,
-		"change_due":    changeDue,
-		"payments":      paymentRecords,
+		"order_id":    orderID,
+		"invoice_no":  invoiceNo,
+		"status":      "paid",
+		"total_minor": totalMinor,
+		"paid_minor":  newPaidMinor,
+		"change_due":  changeDue,
+		"payments":    paymentRecords,
 	}, nil
 }
 
@@ -1057,6 +1058,52 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 
 		updatedOrder, _ := s.GetOrderDetails(req.Context(), restID, orderID)
 		middleware.JSONSuccess(w, http.StatusOK, updatedOrder, nil)
+	})
+
+	r.Patch("/orders/{id}/status", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
+		orderID := chi.URLParam(req, "id")
+
+		var body struct {
+			Status string `json:"status"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", "A status is required", nil)
+			return
+		}
+
+		allowedStatuses := map[string]bool{
+			"picking": true, "packed": true, "dispatched": true, "delivered": true,
+		}
+		if !allowedStatuses[body.Status] {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_STATUS", "Unsupported fulfillment status", nil)
+			return
+		}
+
+		var branchID string
+		var updatedStatus string
+		err := s.pool.QueryRow(req.Context(), `
+			UPDATE orders
+			SET status = $1,
+				closed_at = CASE WHEN $1 = 'delivered' THEN NOW() ELSE closed_at END
+			WHERE id = $2 AND restaurant_id = $3 AND type IN ('delivery', 'pickup')
+			RETURNING branch_id::text, status
+		`, body.Status, orderID, restID).Scan(&branchID, &updatedStatus)
+		if errors.Is(err, pgx.ErrNoRows) {
+			middleware.JSONError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "Fulfillment order not found", nil)
+			return
+		}
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "STATUS_UPDATE_FAILED", err.Error(), nil)
+			return
+		}
+
+		s.audit.Log(req.Context(), "UPDATE_FULFILLMENT_STATUS", "order", &orderID, nil, map[string]string{
+			"status": body.Status, "updated_by": claims.UserID,
+		}, "", "")
+		s.hub.BroadcastBranch(branchID, "order.fulfillment_status", map[string]string{"id": orderID, "status": body.Status})
+		middleware.JSONSuccess(w, http.StatusOK, map[string]string{"id": orderID, "status": updatedStatus}, nil)
 	})
 
 	r.Post("/orders/{id}/cancel", func(w http.ResponseWriter, req *http.Request) {

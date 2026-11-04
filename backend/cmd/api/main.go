@@ -23,6 +23,7 @@ import (
 	"restoflow/internal/platform"
 	"restoflow/internal/platform_admin"
 	"restoflow/internal/reports"
+	"restoflow/internal/scans"
 	"restoflow/internal/seed"
 	"restoflow/internal/settings"
 	"restoflow/internal/shifts"
@@ -74,6 +75,7 @@ func main() {
 	reportService := reports.NewReportService(db.Pool)
 	platformAdminService := platform_admin.NewPlatformAdminService(db.Pool, cfg, auditService)
 	syncService := sync.NewSyncService(db.Pool, orderService)
+	scanService := scans.NewScanService(db.Pool, wsHub)
 
 	// Root Router
 	r := chi.NewRouter()
@@ -128,7 +130,7 @@ func main() {
 			}
 		}
 
-		platform.ServeWS(wsHub, w, req, claims.RestaurantID, branchID)
+		platform.ServeWS(wsHub, w, req, claims.RestaurantID, branchID, claims.UserID, claims.Role == "super_admin")
 	})
 
 	// API v1 Sub-Router
@@ -149,6 +151,7 @@ func main() {
 			reportService.MountRoutes(pr)
 			platformAdminService.MountRoutes(pr)
 			syncService.MountRoutes(pr)
+			scanService.MountRoutes(pr)
 		})
 	})
 

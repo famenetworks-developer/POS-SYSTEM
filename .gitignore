@@ -27,3 +27,7 @@ Thumbs.db
 # Local browser/testing artifacts
 responsive-shots/
 login-check/
+
+# Local HTTPS for phone testing (self-signed cert and key)
+docker-compose.override.yml
+deploy/local-https/

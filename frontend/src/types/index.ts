@@ -352,3 +352,17 @@ export interface AuditLog {
   after?: any;
   created_at: string;
 }
+
+export interface ScanLogEntry {
+  id: string;
+  branch_id: string | null;
+  user_id: string | null;
+  user_name: string;
+  code: string;
+  format: string;
+  product_id: string | null;
+  product_name: string | null;
+  price_minor: number | null;
+  found: boolean;
+  scanned_at: string;
+}

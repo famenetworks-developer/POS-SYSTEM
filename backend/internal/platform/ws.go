@@ -54,6 +54,9 @@ type Client struct {
 	Send         chan []byte
 	RestaurantID string
 	BranchID     string
+	UserID       string
+	// Platform admins (super_admin) also receive platform-wide events.
+	PlatformAdmin bool
 }
 
 type WSHub struct {
@@ -99,6 +102,19 @@ func (h *WSHub) Run() {
 					h.rooms[branchRoom] = make(map[*Client]bool)
 				}
 				h.rooms[branchRoom][client] = true
+			}
+			if client.UserID != "" {
+				userRoom := "user:" + client.UserID
+				if h.rooms[userRoom] == nil {
+					h.rooms[userRoom] = make(map[*Client]bool)
+				}
+				h.rooms[userRoom][client] = true
+			}
+			if client.PlatformAdmin {
+				if h.rooms[PlatformRoom] == nil {
+					h.rooms[PlatformRoom] = make(map[*Client]bool)
+				}
+				h.rooms[PlatformRoom][client] = true
 			}
 			h.mu.Unlock()
 
@@ -151,6 +167,13 @@ func (h *WSHub) BroadcastRestaurant(restaurantID, event string, data interface{}
 	h.BroadcastToRoom("restaurant:"+restaurantID, event, data)
 }
 
+// PlatformRoom holds every connected super_admin.
+const PlatformRoom = "platform"
+
+func (h *WSHub) BroadcastUser(userID, event string, data interface{}) {
+	h.BroadcastToRoom("user:"+userID, event, data)
+}
+
 func (h *WSHub) BroadcastBranch(branchID, event string, data interface{}) {
 	h.BroadcastToRoom("branch:"+branchID, event, data)
 }
@@ -200,18 +223,20 @@ func (c *Client) WritePump() {
 	}
 }
 
-func ServeWS(hub *WSHub, w http.ResponseWriter, r *http.Request, restaurantID, branchID string) {
+func ServeWS(hub *WSHub, w http.ResponseWriter, r *http.Request, restaurantID, branchID, userID string, platformAdmin bool) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[WS] Upgrade error: %v", err)
 		return
 	}
 	client := &Client{
-		Hub:          hub,
-		Conn:         conn,
-		Send:         make(chan []byte, 256),
-		RestaurantID: restaurantID,
-		BranchID:     branchID,
+		Hub:           hub,
+		Conn:          conn,
+		Send:          make(chan []byte, 256),
+		RestaurantID:  restaurantID,
+		BranchID:      branchID,
+		UserID:        userID,
+		PlatformAdmin: platformAdmin,
 	}
 	hub.register <- client
 

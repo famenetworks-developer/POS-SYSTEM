@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { getLanguage, setLanguage, t } from '../../lib/i18n';
 import { cacheBootstrapData, syncOutbox } from '../../offline/sync';
+import { SCAN_BARCODE_ROLES } from '../../lib/access';
 import {
   ShoppingBag,
   ShoppingCart,
@@ -23,6 +24,7 @@ import {
   Store,
   Building2,
   MapPin,
+  ScanBarcode,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -198,6 +200,21 @@ export const Navbar: React.FC = () => {
 
         {/* Right Actions: Shift Indicator, Sync, Language, User, Logout */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {user && SCAN_BARCODE_ROLES.includes(user.role) && (
+            <Link
+              to="/scan"
+              title="Scan barcode"
+              aria-label="Scan barcode"
+              className={`inline-flex items-center justify-center gap-1.5 min-h-[40px] px-2.5 sm:px-4 py-2 rounded-lg border text-xs font-bold focus-visible:ring-2 focus-visible:ring-[#E21B70] ${
+                location.pathname === '/scan'
+                  ? 'border-[#E21B70] bg-[#FFF0F6] text-[#E21B70]'
+                  : 'border-[#2E3138] hover:bg-[#F7F7F7]'
+              }`}
+            >
+              <ScanBarcode className="w-4 h-4" />
+              <span className="hidden sm:inline">Scan barcode</span>
+            </Link>
+          )}
           {/* Shift status */}
           <Link
             to="/login"

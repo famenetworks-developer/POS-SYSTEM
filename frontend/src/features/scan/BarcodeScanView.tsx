@@ -9,12 +9,14 @@ import { MenuItem, ScanLogEntry } from '../../types';
 import { ScanActivityLog } from './ScanActivityLog';
 import { CodeLookupBox } from './CodeLookupBox';
 import { BarcodeCatalogPanel } from './BarcodeCatalogPanel';
+import { downloadAllBarcodes } from './productBarcodes';
 import {
   Barcode,
   Camera,
   CameraOff,
   Check,
   Copy,
+  Download,
   MapPin,
   Package,
   ScanBarcode,
@@ -76,6 +78,7 @@ export const BarcodeScanView: React.FC = () => {
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [popupItem, setPopupItem] = useState<MenuItem | null>(null);
   const [catalogOpen, setCatalogOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const closePopup = useCallback(() => setPopupItem(null), []);
   const branchId = activeBranch?.id || '';
   const [activity, setActivity] = useState<ScanLogEntry[]>([]);
@@ -229,6 +232,19 @@ export const BarcodeScanView: React.FC = () => {
 
   const closeCatalog = useCallback(() => setCatalogOpen(false), []);
 
+  const handleDownloadBarcodes = async () => {
+    setDownloading(true);
+    try {
+      const count = await downloadAllBarcodes();
+      if (count) showToast('success', `Downloaded barcodes for ${count} products`);
+      else showToast('error', 'No products with a barcode to download');
+    } catch {
+      showToast('error', 'Could not download barcodes');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   const handleDeviceChange = (id: string) => {
     setDeviceId(id);
     if (cameraOn) void startCamera(id || undefined);
@@ -249,14 +265,25 @@ export const BarcodeScanView: React.FC = () => {
           </p>
         </div>
         {restaurant && (
+          <div className="ml-auto flex shrink-0 flex-wrap justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => void handleDownloadBarcodes()}
+            disabled={downloading}
+            title="Download a printable PDF with the barcodes of all products"
+            className="inline-flex shrink-0 items-center gap-2 min-h-[40px] px-3 sm:px-4 rounded-lg bg-[#E21B70] hover:bg-[#C91661] text-white text-xs font-bold disabled:opacity-60 disabled:cursor-wait"
+          >
+            <Download className="w-4 h-4" /> {downloading ? 'Preparing…' : 'Download Barcodes'}
+          </button>
           <button
             type="button"
             onClick={() => setCatalogOpen((v) => !v)}
             aria-expanded={catalogOpen}
-            className="ml-auto inline-flex shrink-0 items-center gap-2 min-h-[40px] px-3 sm:px-4 rounded-lg border border-[#E21B70] text-[#E21B70] text-xs font-bold hover:bg-[#FFF0F6]"
+            className="inline-flex shrink-0 items-center gap-2 min-h-[40px] px-3 sm:px-4 rounded-lg border border-[#E21B70] text-[#E21B70] text-xs font-bold hover:bg-[#FFF0F6]"
           >
             <Barcode className="w-4 h-4" /> See barcodes
           </button>
+          </div>
         )}
       </div>
 

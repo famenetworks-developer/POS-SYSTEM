@@ -1,20 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Barcode, ChevronUp, Search, X } from 'lucide-react';
-import { api, ApiError } from '../../lib/api';
+import { ApiError } from '../../lib/api';
 import { canEncodeCode128, encodeCode128 } from '../../lib/code128';
 import { formatMoney } from '../../lib/money';
 import { MenuItem } from '../../types';
+import { loadActiveProducts, productCode } from './productBarcodes';
 
 // Panel width on wide screens. The scan page adds the same right padding (xl:pr-[420px]) while it is open.
 export const BARCODE_PANEL_WIDTH_CLASS = 'xl:w-[420px]';
-
-// The code a product is looked up by: its barcode, or its SKU when it has no barcode.
-const productCode = (item: MenuItem): { code: string; kind: 'Barcode' | 'SKU' } | null => {
-  const barcode = item.barcode?.trim();
-  if (barcode) return { code: barcode, kind: 'Barcode' };
-  const sku = item.sku?.trim();
-  return sku ? { code: sku, kind: 'SKU' } : null;
-};
 
 // Draws a Code 128 barcode. White background and quiet zones so it can be scanned off a screen.
 const Code128Svg: React.FC<{ code: string }> = ({ code }) => {
@@ -97,13 +90,8 @@ export const BarcodeCatalogPanel: React.FC<{ open: boolean; onClose: () => void 
   useEffect(() => {
     if (!open || loadStartedRef.current) return;
     loadStartedRef.current = true;
-    api
-      .get<MenuItem[]>('/items')
-      .then((rows) => {
-        const active = (rows || []).filter((it) => it.is_active);
-        active.sort((a, b) => a.name_en.localeCompare(b.name_en));
-        setItems(active);
-      })
+    loadActiveProducts()
+      .then(setItems)
       .catch((err) => {
         loadStartedRef.current = false; // allow a retry on the next open
         setError(err instanceof ApiError ? err.message : 'Could not load products');

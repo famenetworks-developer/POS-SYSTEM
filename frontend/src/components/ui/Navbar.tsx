@@ -341,7 +341,7 @@ export const Navbar: React.FC = () => {
 
       {/* Mobile Drawer Menu */}
       {mobileMenuOpen && (
-        <div className="lg:hidden border-t border-[#E2E8F0] bg-white px-4 py-3 space-y-2">
+        <div className="lg:hidden max-h-[calc(100dvh-7.25rem)] overflow-y-auto overscroll-contain border-t border-[#E2E8F0] bg-white px-3 sm:px-4 py-3 space-y-2 shadow-lg">
           {branches.length > 0 && (
             <label className="block text-xs font-bold text-[#475569]">
               <span className="block mb-1.5">Active outlet</span>
@@ -391,6 +391,13 @@ export const Navbar: React.FC = () => {
               <Globe className="w-4 h-4" /> {lang === 'en' ? 'বাংলা' : 'English'}
             </button>
           </div>
+          <button
+            type="button"
+            onClick={logout}
+            className="w-full min-h-[44px] rounded-xl border border-rose-200 bg-rose-50 flex items-center justify-center gap-2 text-xs font-bold text-rose-700 hover:bg-rose-100"
+          >
+            <LogOut className="w-4 h-4" /> {t('logout')}
+          </button>
         </div>
       )}
     </header>

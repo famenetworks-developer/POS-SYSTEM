@@ -104,8 +104,8 @@ export const LoginView: React.FC = () => {
           </div>
         </section>
 
-        <section className="login-form-panel flex items-center justify-center p-4 sm:p-8 lg:p-10 xl:p-14 bg-[#F3F0E9]">
-      <div className="login-form-card max-w-md w-full bg-[#FFFCF7] border border-[#DDD8CE] rounded-[24px] p-6 sm:p-9 shadow-[0_25px_60px_rgba(26,22,16,.14)] relative overflow-hidden">
+        <section className="login-form-panel min-w-0 flex items-center justify-center p-4 sm:p-8 lg:p-10 xl:p-14 bg-[#F3F0E9]">
+      <div className="login-form-card min-w-0 max-w-md w-full bg-[#FFFCF7] border border-[#DDD8CE] rounded-[24px] p-6 sm:p-9 shadow-[0_25px_60px_rgba(26,22,16,.14)] relative overflow-hidden">
         {/* Glow backdrop */}
         <div className="absolute top-0 right-0 w-48 h-48 bg-[#0D5C3A]/5 rounded-full blur-3xl pointer-events-none" />
 
@@ -114,12 +114,12 @@ export const LoginView: React.FC = () => {
           <div className="lg:hidden w-14 h-14 rounded-2xl bg-[#E21B70] flex items-center justify-center text-white font-black shadow-lg shadow-[#E21B70]/25 mb-3">
             <ShoppingBag className="w-7 h-7" />
           </div>
-          <h1 className="text-4xl sm:text-5xl font-black text-[#122428] tracking-[-.04em]">Welcome back.</h1>
+          <h1 className="text-[clamp(2rem,10vw,3rem)] font-black text-[#122428] tracking-[-.04em] leading-tight">Welcome back.</h1>
           <p className="text-sm text-[#7B7A74] mt-2">Sign in to continue to NovaMart.</p>
         </div>
 
         {/* Mode switcher tabs */}
-        <div className="grid grid-cols-2 gap-1 bg-[#F1F5F9] p-1 rounded-xl mb-6 border border-[#E2E8F0]">
+        <div className="login-mode-tabs grid grid-cols-2 gap-1 bg-[#F1F5F9] p-1 rounded-xl mb-6 border border-[#E2E8F0]">
           <button
             onClick={() => setTab('email')}
             className={`py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 ${
@@ -150,8 +150,9 @@ export const LoginView: React.FC = () => {
         {tab === 'email' && (
           <form onSubmit={handleEmailLogin} className="space-y-4">
             <div>
-              <label className="text-xs font-bold text-[#0F172A] mb-1 block">Staff Email Address</label>
+              <label htmlFor="staff-email" className="text-xs font-bold text-[#0F172A] mb-1 block">Staff Email Address</label>
               <input
+                id="staff-email"
                 type="email"
                 required
                 value={email}
@@ -162,8 +163,9 @@ export const LoginView: React.FC = () => {
             </div>
 
             <div>
-              <label className="text-xs font-bold text-[#0F172A] mb-1 block">Password</label>
+              <label htmlFor="staff-password" className="text-xs font-bold text-[#0F172A] mb-1 block">Password</label>
               <input
+                id="staff-password"
                 type="password"
                 required
                 value={password}
@@ -187,8 +189,9 @@ export const LoginView: React.FC = () => {
         {tab === 'pin' && (
           <div className="space-y-4">
             <div>
-              <label className="text-xs font-bold text-[#0F172A] mb-1 block">Checkout Branch Outlet</label>
+              <label htmlFor="checkout-branch" className="text-xs font-bold text-[#0F172A] mb-1 block">Checkout Branch Outlet</label>
               <select
+                id="checkout-branch"
                 value={selectedBranchId}
                 onChange={(e) => setSelectedBranchId(e.target.value)}
                 className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-2 text-xs text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#0D5C3A]"
@@ -227,12 +230,12 @@ export const LoginView: React.FC = () => {
 
         {/* Quick Demo Logins Section */}
         <div className="mt-6 pt-5 border-t border-[#E2E8F0]">
-          <div className="flex items-center gap-1.5 justify-center text-[10px] font-black uppercase tracking-wider text-[#64748B] mb-2.5">
+          <div className="flex items-start gap-1.5 justify-center text-center text-[10px] font-black uppercase tracking-wider text-[#64748B] mb-2.5 leading-relaxed">
             <Sparkles className="w-3.5 h-3.5 text-[#0D5C3A]" />
             <span>One-Click Super Shop Demo Logins:</span>
           </div>
 
-          <div className="grid grid-cols-3 gap-1.5">
+          <div className="login-demo-grid grid grid-cols-3 gap-1.5">
             <button
               onClick={() => fillQuickDemo('cashier@novamart.com', 'cashier123')}
               className="px-2 py-1.5 rounded-lg bg-[#E6F4EA] hover:bg-[#D4EEDC] text-[#0D5C3A] text-[10px] font-extrabold border border-[#C6E6D2] text-center"

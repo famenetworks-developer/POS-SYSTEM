@@ -61,6 +61,12 @@ img, video { height: auto; }
 
 button, input, select, textarea { max-width: 100%; }
 
+/* Flex and grid children should be allowed to shrink inside the viewport. */
+main, section, article, aside, nav, form, fieldset,
+main > *, section > *, article > *, form > * { min-width: 0; }
+
+table { border-collapse: collapse; }
+
 .app-content-height { height: calc(100dvh - 116px); }
 
 .login-page {
@@ -104,9 +110,16 @@ button, input, select, textarea { max-width: 100%; }
 
 @media (max-width: 479px) {
   .login-page { padding: 0; }
-  .login-shell { border: 0; border-radius: 0; min-height: 100dvh; }
-  .login-form-panel { padding: 14px; min-height: 100dvh; }
+  .login-shell { width: 100%; max-width: 100%; border: 0; border-radius: 0; min-height: 100dvh; }
+  .login-form-panel { width: 100%; max-width: 100%; padding: 14px; min-height: 100dvh; }
   .login-form-card { padding: 22px 18px; border-radius: 20px; }
+}
+
+@media (max-width: 359px) {
+  .login-form-panel { padding: 10px; }
+  .login-form-card { padding-inline: 14px; }
+  .login-mode-tabs button { gap: 4px; padding-inline: 4px; font-size: 10px; }
+  .login-demo-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* Keep data-heavy back-office tables contained by their scroll regions. */
@@ -122,6 +135,7 @@ button, input, select, textarea { max-width: 100%; }
   [data-navbar-sync], [data-navbar-language], [data-navbar-logout] { display: none !important; }
 
   button, [role="button"], a { touch-action: manipulation; }
+  button:not(.category-rail-item), [role="button"], input, select, textarea { min-height: 44px; }
   input, select, textarea { font-size: 16px !important; }
 
   [class*="fixed inset-0"] {

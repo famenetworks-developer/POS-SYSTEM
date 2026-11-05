@@ -8,7 +8,9 @@ import { getProductImage } from '../../lib/productImages';
 import { MenuItem, ScanLogEntry } from '../../types';
 import { ScanActivityLog } from './ScanActivityLog';
 import { CodeLookupBox } from './CodeLookupBox';
+import { BarcodeCatalogPanel } from './BarcodeCatalogPanel';
 import {
+  Barcode,
   Camera,
   CameraOff,
   Check,
@@ -73,6 +75,7 @@ export const BarcodeScanView: React.FC = () => {
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [popupItem, setPopupItem] = useState<MenuItem | null>(null);
+  const [catalogOpen, setCatalogOpen] = useState(false);
   const closePopup = useCallback(() => setPopupItem(null), []);
   const branchId = activeBranch?.id || '';
   const [activity, setActivity] = useState<ScanLogEntry[]>([]);
@@ -224,12 +227,16 @@ export const BarcodeScanView: React.FC = () => {
 
   useEffect(() => stopCamera, [stopCamera]);
 
+  const closeCatalog = useCallback(() => setCatalogOpen(false), []);
+
   const handleDeviceChange = (id: string) => {
     setDeviceId(id);
     if (cameraOn) void startCamera(id || undefined);
   };
 
   return (
+    // While the barcode panel is open on a wide screen, the page makes room for it on the right.
+    <div className={`transition-[padding] duration-300 ease-out ${catalogOpen ? 'xl:pr-[420px]' : ''}`}>
     <main className="max-w-[1200px] w-full mx-auto px-3 sm:px-6 py-5 sm:py-8">
       <div className="flex items-center gap-3 mb-5">
         <div className="w-10 h-10 rounded-lg bg-[#FFF0F6] text-[#E21B70] flex items-center justify-center shrink-0">
@@ -241,6 +248,16 @@ export const BarcodeScanView: React.FC = () => {
             {activeBranch?.name || restaurant?.name || 'NovaMart'} · Scan any barcode or QR code · Products show price, stock and shelf
           </p>
         </div>
+        {restaurant && (
+          <button
+            type="button"
+            onClick={() => setCatalogOpen((v) => !v)}
+            aria-expanded={catalogOpen}
+            className="ml-auto inline-flex shrink-0 items-center gap-2 min-h-[40px] px-3 sm:px-4 rounded-lg border border-[#E21B70] text-[#E21B70] text-xs font-bold hover:bg-[#FFF0F6]"
+          >
+            <Barcode className="w-4 h-4" /> See barcodes
+          </button>
+        )}
       </div>
 
       {!restaurant && (
@@ -394,6 +411,8 @@ export const BarcodeScanView: React.FC = () => {
         />
       )}
     </main>
+    <BarcodeCatalogPanel open={catalogOpen} onClose={closeCatalog} />
+    </div>
   );
 };
 

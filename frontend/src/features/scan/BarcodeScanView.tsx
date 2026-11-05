@@ -7,16 +7,15 @@ import { wsHub } from '../../lib/ws';
 import { getProductImage } from '../../lib/productImages';
 import { MenuItem, ScanLogEntry } from '../../types';
 import { ScanActivityLog } from './ScanActivityLog';
+import { CodeLookupBox } from './CodeLookupBox';
 import {
   Camera,
   CameraOff,
   Check,
   Copy,
-  Keyboard,
   MapPin,
   Package,
   ScanBarcode,
-  Search,
   TriangleAlert,
   X,
 } from 'lucide-react';
@@ -70,7 +69,6 @@ export const BarcodeScanView: React.FC = () => {
   const [cameraError, setCameraError] = useState('');
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [deviceId, setDeviceId] = useState('');
-  const [manualCode, setManualCode] = useState('');
   const [lookup, setLookup] = useState<LookupState>({ status: 'idle' });
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,12 +229,6 @@ export const BarcodeScanView: React.FC = () => {
     if (cameraOn) void startCamera(id || undefined);
   };
 
-  const handleManualSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    void lookupCode({ text: manualCode, format: 'Typed' });
-    setManualCode('');
-  };
-
   return (
     <main className="max-w-[1200px] w-full mx-auto px-3 sm:px-6 py-5 sm:py-8">
       <div className="flex items-center gap-3 mb-5">
@@ -335,29 +327,7 @@ export const BarcodeScanView: React.FC = () => {
             </div>
           </div>
 
-          <form onSubmit={handleManualSubmit} className="rounded-2xl border border-[#E3E6E8] bg-white p-4 shadow-sm">
-            <label htmlFor="manual-barcode" className="flex items-center gap-2 text-xs font-bold text-[#334155] mb-2">
-              <Keyboard className="w-4 h-4" /> Type a code or use a USB scanner
-            </label>
-            <div className="flex gap-2">
-              <input
-                id="manual-barcode"
-                value={manualCode}
-                onChange={(e) => setManualCode(e.target.value)}
-                autoComplete="off"
-                autoFocus
-                placeholder="Barcode, SKU or any code"
-                className="min-h-[44px] flex-1 min-w-0 rounded-lg border border-[#CBD5E1] px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#E21B70]"
-              />
-              <button
-                type="submit"
-                disabled={!manualCode.trim()}
-                className="inline-flex items-center gap-1.5 min-h-[44px] px-4 rounded-lg bg-[#2E3138] text-white text-xs font-bold disabled:opacity-40"
-              >
-                <Search className="w-4 h-4" /> Look up
-              </button>
-            </div>
-          </form>
+          <CodeLookupBox onLookup={(code) => void lookupCode({ text: code, format: 'Typed' })} />
         </section>
 
         {/* Result */}

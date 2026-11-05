@@ -136,6 +136,54 @@ func (s *MenuService) ListItems(ctx context.Context, restID string, categoryID s
 	return items, nil
 }
 
+// CodeSuggestion is one type-ahead match. Code is the barcode or SKU that matched the typed prefix.
+type CodeSuggestion struct {
+	ProductID      string `json:"product_id"`
+	NameEN         string `json:"name_en"`
+	Code           string `json:"code"`
+	CodeType       string `json:"code_type"` // "barcode" or "sku"
+	BasePriceMinor int64  `json:"base_price_minor"`
+}
+
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// SuggestByCode returns active products whose main barcode, extra barcode or SKU starts with prefix
+// (case-insensitive), one row per product, ordered by the matched code.
+func (s *MenuService) SuggestByCode(ctx context.Context, restID, prefix string, limit int) ([]CodeSuggestion, error) {
+	pattern := likeEscaper.Replace(prefix) + "%"
+	rows, err := s.pool.Query(ctx, `
+		SELECT product_id, name_en, code, code_type, base_price_minor FROM (
+			SELECT DISTINCT ON (m.id)
+			       m.id::text AS product_id, m.name_en, m.base_price_minor,
+			       CASE WHEN m.barcode ILIKE $2 THEN m.barcode
+			            WHEN pb.barcode IS NOT NULL THEN pb.barcode
+			            ELSE m.sku END AS code,
+			       CASE WHEN m.barcode ILIKE $2 OR pb.barcode IS NOT NULL THEN 'barcode' ELSE 'sku' END AS code_type
+			FROM menu_items m
+			LEFT JOIN product_barcodes pb
+			       ON pb.product_id = m.id AND pb.restaurant_id = $1 AND pb.barcode ILIKE $2
+			WHERE m.restaurant_id = $1 AND m.is_active = TRUE
+			  AND (m.barcode ILIKE $2 OR pb.barcode IS NOT NULL OR m.sku ILIKE $2)
+			ORDER BY m.id, pb.is_primary DESC NULLS LAST, pb.barcode
+		) matches
+		ORDER BY code, name_en
+		LIMIT $3`, restID, pattern, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	suggestions := []CodeSuggestion{}
+	for rows.Next() {
+		var sg CodeSuggestion
+		if err := rows.Scan(&sg.ProductID, &sg.NameEN, &sg.Code, &sg.CodeType, &sg.BasePriceMinor); err != nil {
+			return nil, err
+		}
+		suggestions = append(suggestions, sg)
+	}
+	return suggestions, rows.Err()
+}
+
 func (s *MenuService) GetItemByBarcode(ctx context.Context, restID, barcode string) (*models.MenuItem, error) {
 	cleanBarcode := strings.TrimSpace(barcode)
 	if cleanBarcode == "" {
@@ -250,6 +298,26 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			return
 		}
 		middleware.JSONSuccess(w, http.StatusOK, item, nil)
+	})
+
+	// Type-ahead for the scan page: products whose barcode (main or extra) or SKU starts with q.
+	r.Get("/items/suggest", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		q := strings.TrimSpace(req.URL.Query().Get("q"))
+		if q == "" {
+			middleware.JSONSuccess(w, http.StatusOK, []CodeSuggestion{}, nil)
+			return
+		}
+		limit := 8
+		if n, err := strconv.Atoi(req.URL.Query().Get("limit")); err == nil && n > 0 && n <= 20 {
+			limit = n
+		}
+		suggestions, err := s.SuggestByCode(req.Context(), restID, q, limit)
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "SUGGEST_FAILED", "Could not load suggestions", nil)
+			return
+		}
+		middleware.JSONSuccess(w, http.StatusOK, suggestions, nil)
 	})
 
 	// Multi-criteria Product Search

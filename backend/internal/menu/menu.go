@@ -30,6 +30,18 @@ func NewMenuService(pool *pgxpool.Pool, hub *platform.WSHub, audit *audit.AuditS
 	return &MenuService{pool: pool, hub: hub, audit: audit}
 }
 
+// Cashiers need catalogue prices to sell products, but purchase cost is
+// confidential business data and must never be included in their responses.
+func redactPurchaseCosts(role string, items []models.MenuItem) []models.MenuItem {
+	if role != "cashier" {
+		return items
+	}
+	for i := range items {
+		items[i].CostPriceMinor = 0
+	}
+	return items
+}
+
 func (s *MenuService) ListCategories(ctx context.Context, restID string) ([]models.Category, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, restaurant_id, name_en, COALESCE(name_bn, ''), sort, COALESCE(color, '#0d5c3a'), station_id, is_active, created_at
@@ -285,6 +297,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusInternalServerError, "FETCH_FAILED", err.Error(), nil)
 			return
 		}
+		items = redactPurchaseCosts(middleware.GetUserClaims(req.Context()).Role, items)
 		middleware.JSONSuccess(w, http.StatusOK, items, nil)
 	})
 
@@ -296,6 +309,9 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 		if err != nil {
 			middleware.JSONError(w, http.StatusNotFound, "NOT_FOUND", "Product with barcode not found", nil)
 			return
+		}
+		if middleware.GetUserClaims(req.Context()).Role == "cashier" {
+			item.CostPriceMinor = 0
 		}
 		middleware.JSONSuccess(w, http.StatusOK, item, nil)
 	})
@@ -326,6 +342,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 		query := strings.ToLower(strings.TrimSpace(req.URL.Query().Get("q")))
 		if query == "" {
 			items, _ := s.ListItems(req.Context(), restID, "")
+			items = redactPurchaseCosts(middleware.GetUserClaims(req.Context()).Role, items)
 			middleware.JSONSuccess(w, http.StatusOK, items, nil)
 			return
 		}
@@ -380,6 +397,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 				results = append(results, it)
 			}
 		}
+		results = redactPurchaseCosts(middleware.GetUserClaims(req.Context()).Role, results)
 		middleware.JSONSuccess(w, http.StatusOK, results, nil)
 	})
 
@@ -937,6 +955,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 
 		categories, _ := s.ListCategories(req.Context(), restID)
 		items, _ := s.ListItems(req.Context(), restID, "")
+		items = redactPurchaseCosts(middleware.GetUserClaims(req.Context()).Role, items)
 
 		// Checkout Registers / Counters (mapped to tables table)
 		var sections []models.TableSection
@@ -983,7 +1002,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 		}
 
 		settingsMap := make(map[string]interface{})
-		stRows, _ := s.pool.Query(req.Context(), "SELECT key, value FROM settings WHERE restaurant_id = $1", restID)
+		stRows, _ := s.pool.Query(req.Context(), "SELECT key, value FROM settings WHERE restaurant_id = $1 AND key IN ('tax','receipt')", restID)
 		if stRows != nil {
 			for stRows.Next() {
 				var k string

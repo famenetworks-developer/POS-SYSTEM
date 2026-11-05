@@ -6,14 +6,14 @@ export type AppArea =
   | 'reports' | 'staff' | 'shifts' | 'settings' | 'platform' | 'scan';
 
 const access: Record<AppArea, Role[]> = {
-  pos: ['owner', 'manager', 'cashier'],
+  pos: ['cashier'],
   fulfillment: ['owner', 'manager', 'delivery_staff'],
   assistant: ['owner', 'manager', 'cashier', 'inventory_manager'],
-  registers: ['owner', 'manager'],
+  registers: ['owner', 'admin', 'manager'],
   dashboard: ['owner', 'manager'],
   administration: ['admin'],
   approvals: ['owner', 'manager'],
-  products: ['owner', 'inventory_manager'],
+  products: ['owner', 'manager', 'inventory_manager'],
   inventory: ['owner', 'inventory_manager'],
   sales: ['owner', 'manager'],
   customers: ['owner', 'manager', 'cashier'],
@@ -24,7 +24,7 @@ const access: Record<AppArea, Role[]> = {
   settings: ['owner', 'admin'],
   platform: ['super_admin'],
   // Barcode scan page; the /api/v1/scans endpoints enforce the same roles.
-  scan: ['super_admin', 'cashier'],
+  scan: ['super_admin', 'cashier', 'inventory_manager'],
 };
 
 export const canAccess = (role: Role | undefined, area: AppArea) =>

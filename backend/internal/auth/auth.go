@@ -558,6 +558,7 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 	// Protected endpoints
 	r.Group(func(pr chi.Router) {
 		pr.Use(middleware.Auth(s.cfg.JWTAccessSecret))
+		pr.Use(middleware.RequireAppAccess)
 		pr.Use(middleware.RequirePermission(s.pool))
 		pr.Use(middleware.EnforceBranchScope(s.pool))
 

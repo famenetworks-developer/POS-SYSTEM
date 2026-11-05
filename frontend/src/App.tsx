@@ -54,7 +54,7 @@ const ProtectedLayout: React.FC = () => {
 
 const RoleRoute: React.FC<{ area: AppArea; children: React.ReactNode }> = ({ area, children }) => {
   const { user } = useAuth();
-  return canAccess(user?.role, area) ? <>{children}</> : <Navigate to="/access-denied" replace />;
+  return canAccess(user?.role, area) ? <>{children}</> : <Navigate to={homeForRole(user?.role)} replace />;
 };
 
 const HomeRoute: React.FC = () => {

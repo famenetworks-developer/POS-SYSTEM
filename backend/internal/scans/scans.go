@@ -53,7 +53,7 @@ func scanRow(row interface{ Scan(dest ...any) error }, l *ScanLog) error {
 func (s *ScanService) MountRoutes(r chi.Router) {
 	// Same roles as the /scan page (super_admin always passes RequireRole).
 	r.Group(func(sr chi.Router) {
-		sr.Use(middleware.RequireRole("cashier"))
+		sr.Use(middleware.RequireRole("cashier", "inventory_manager"))
 
 		// Record a scan. Product name and price are read from the database, not trusted from the client.
 		sr.Post("/scans", func(w http.ResponseWriter, req *http.Request) {
@@ -113,7 +113,7 @@ func (s *ScanService) MountRoutes(r chi.Router) {
 			middleware.JSONSuccess(w, http.StatusCreated, l, nil)
 		})
 
-		// List recent scans: super admins see every scan, everyone else sees their own.
+		// Platform admins see every scan; tenant users see their own scans.
 		sr.Get("/scans", func(w http.ResponseWriter, req *http.Request) {
 			claims := middleware.GetUserClaims(req.Context())
 			limit := defaultLimit

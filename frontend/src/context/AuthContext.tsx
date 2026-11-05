@@ -10,8 +10,8 @@ interface AuthContextType {
   branches: Branch[];
   activeBranch: Branch | null;
   setActiveBranch: (b: Branch) => void;
-  login: (email: string, pass: string) => Promise<void>;
-  pinLogin: (branchId: string, pin: string) => Promise<void>;
+  login: (email: string, pass: string) => Promise<User>;
+  pinLogin: (branchId: string, pin: string) => Promise<User>;
   logout: () => void;
   impersonate: (restId: string) => Promise<void>;
   isLoading: boolean;
@@ -90,6 +90,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       wsHub.connect(res.branches[0].id);
       cacheBootstrapData(res.branches[0].id);
     }
+    return res.user as User;
   };
 
   const pinLogin = async (branchId: string, pin: string) => {
@@ -98,6 +99,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('restoflow_refresh_token', res.refresh_token);
     setUser(res.user);
     await loadMe();
+    return res.user as User;
   };
 
   const logout = () => {

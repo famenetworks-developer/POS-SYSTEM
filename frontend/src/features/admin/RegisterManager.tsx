@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export const RegisterManager: React.FC = () => {
-  const { restaurant, activeBranch } = useAuth();
+  const { restaurant, activeBranch, user } = useAuth();
   const [registers, setRegisters] = useState<Register[]>([]);
   const [zones, setZones] = useState<CheckoutZone[]>([]);
   const [shifts, setShifts] = useState<any[]>([]);
@@ -34,7 +34,9 @@ export const RegisterManager: React.FC = () => {
       const [secData, tblData, shiftData] = await Promise.all([
         api.get(`/table-sections?branch_id=${activeBranch?.id || ''}`),
         api.get(`/tables?branch_id=${activeBranch?.id || ''}`),
-        api.get(`/shifts?branch_id=${activeBranch?.id || ''}`),
+        user?.role === 'admin'
+          ? Promise.resolve([])
+          : api.get(`/shifts?branch_id=${activeBranch?.id || ''}`),
       ]);
       setZones(secData || []);
       setRegisters(tblData || []);
@@ -49,7 +51,7 @@ export const RegisterManager: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [activeBranch]);
+  }, [activeBranch, user?.role]);
 
   const handleCreateRegister = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +89,9 @@ export const RegisterManager: React.FC = () => {
           </div>
           <h1 className="text-xl sm:text-2xl font-black text-[#0F172A]">Registers & Checkout Counters</h1>
           <p className="text-xs text-[#64748B] mt-0.5">
-            Manage checkout lanes, cashier register shifts, cash drawer balances, and lane statuses
+            {user?.role === 'admin'
+              ? 'Configure checkout terminals, scanners, printers, and lane availability'
+              : 'Manage checkout lanes, cashier register shifts, cash drawer balances, and lane statuses'}
           </p>
         </div>
 
@@ -112,7 +116,7 @@ export const RegisterManager: React.FC = () => {
           </div>
         </div>
 
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
+        {user?.role !== 'admin' && <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">Active Registers</p>
             <p className="text-2xl font-black text-[#0D5C3A] mt-1">{activeShiftCount || 1}</p>
@@ -120,9 +124,9 @@ export const RegisterManager: React.FC = () => {
           <div className="w-10 h-10 rounded-xl bg-[#E6F4EA] text-[#0D5C3A] flex items-center justify-center font-bold">
             <CheckCircle2 className="w-5 h-5" />
           </div>
-        </div>
+        </div>}
 
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
+        {user?.role !== 'admin' && <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">Idle / Standby</p>
             <p className="text-2xl font-black text-amber-600 mt-1">{Math.max(0, registers.length - (activeShiftCount || 1))}</p>
@@ -130,9 +134,9 @@ export const RegisterManager: React.FC = () => {
           <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center font-bold">
             <Clock className="w-5 h-5" />
           </div>
-        </div>
+        </div>}
 
-        <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
+        {user?.role !== 'admin' && <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">Cash Drawer Security</p>
             <p className="text-xs font-black text-[#0D5C3A] mt-2 flex items-center gap-1">
@@ -142,7 +146,7 @@ export const RegisterManager: React.FC = () => {
           <div className="w-10 h-10 rounded-xl bg-[#E6F4EA] text-[#0D5C3A] flex items-center justify-center font-bold">
             <DollarSign className="w-5 h-5" />
           </div>
-        </div>
+        </div>}
       </div>
 
       {/* Register Counters Grid */}
@@ -191,16 +195,16 @@ export const RegisterManager: React.FC = () => {
                         : 'Self-Checkout Terminal'}
                     </span>
                   </div>
-                  <div className="flex justify-between">
+                  {user?.role !== 'admin' && <div className="flex justify-between">
                     <span>Cashier Assigned:</span>
                     <span className="font-semibold text-[#0D5C3A]">
                       {isOpen ? 'Sadia Rahman (Lead)' : 'Unassigned'}
                     </span>
-                  </div>
-                  <div className="flex justify-between">
+                  </div>}
+                  {user?.role !== 'admin' && <div className="flex justify-between">
                     <span>Opening Float:</span>
                     <span className="font-bold text-[#0F172A]">৳ 2,000.00</span>
-                  </div>
+                  </div>}
                   <div className="flex justify-between">
                     <span>Barcode Scanner:</span>
                     <span className="font-bold text-emerald-700">Connected (Laser USB)</span>
@@ -212,9 +216,9 @@ export const RegisterManager: React.FC = () => {
                 <span className="text-[11px] text-[#64748B]">
                   Thermal 80mm Printer: <strong className="text-[#0D5C3A]">Ready</strong>
                 </span>
-                <span className="text-xs font-black text-[#0D5C3A] bg-[#E6F4EA] px-2.5 py-1 rounded-xl">
+                {user?.role !== 'admin' && <span className="text-xs font-black text-[#0D5C3A] bg-[#E6F4EA] px-2.5 py-1 rounded-xl">
                   {isOpen ? 'Open Shift' : 'Idle'}
-                </span>
+                </span>}
               </div>
             </div>
           );

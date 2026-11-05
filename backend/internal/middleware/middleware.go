@@ -170,26 +170,30 @@ func RequireAppAccess(next http.Handler) http.Handler {
 			allowed = roleAllowed(claims.Role, "owner", "manager")
 		case path == "/expenses" || strings.HasPrefix(path, "/expenses/"):
 			allowed = roleAllowed(claims.Role, "owner", "accountant")
-		case path == "/settings" || path == "/restaurant" || path == "/branches":
+		case path == "/settings":
+			allowed = roleAllowed(claims.Role, "owner", "admin")
+		case path == "/restaurant" || path == "/branches":
 			allowed = !write || roleAllowed(claims.Role, "owner", "admin")
 		case strings.HasPrefix(path, "/inventory-items") || strings.HasPrefix(path, "/stock") || strings.HasPrefix(path, "/recipes"):
 			if write {
 				allowed = roleAllowed(claims.Role, "owner", "inventory_manager")
 			} else {
-				allowed = roleAllowed(claims.Role, "owner", "admin", "manager", "inventory_manager", "purchase_manager")
+				allowed = roleAllowed(claims.Role, "owner", "manager", "inventory_manager", "purchase_manager")
 			}
 		case strings.HasPrefix(path, "/suppliers") || strings.HasPrefix(path, "/purchase-orders"):
 			if write {
 				allowed = roleAllowed(claims.Role, "owner", "purchase_manager")
 			} else {
-				allowed = roleAllowed(claims.Role, "owner", "admin", "manager", "purchase_manager")
+				allowed = roleAllowed(claims.Role, "owner", "manager", "purchase_manager")
 			}
+		case path == "/items/export":
+			allowed = roleAllowed(claims.Role, "owner", "manager", "inventory_manager", "purchase_manager")
 		case path == "/categories" || strings.HasPrefix(path, "/items"):
-			allowed = (!write && roleAllowed(claims.Role, "owner", "admin", "manager", "cashier", "inventory_manager", "purchase_manager")) || (write && roleAllowed(claims.Role, "owner", "inventory_manager"))
+			allowed = (!write && roleAllowed(claims.Role, "owner", "manager", "cashier", "inventory_manager", "purchase_manager")) || (write && roleAllowed(claims.Role, "owner", "manager", "inventory_manager"))
 		case strings.HasPrefix(path, "/orders"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
 			if strings.HasSuffix(path, "/refund") || strings.HasSuffix(path, "/cancel") {
-				allowed = roleAllowed(claims.Role, "owner")
+				allowed = roleAllowed(claims.Role, "owner", "manager")
 			}
 		case strings.HasPrefix(path, "/shifts"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")

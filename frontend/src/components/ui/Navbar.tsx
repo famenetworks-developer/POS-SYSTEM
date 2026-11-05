@@ -119,9 +119,9 @@ export const Navbar: React.FC = () => {
           : '/admin';
 
   const navItems = [
-    { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['owner', 'manager', 'cashier'] },
+    { path: '/pos', label: t('pos'), icon: ShoppingCart, roles: ['cashier'] },
     { path: '/fulfillment', label: t('fulfillment'), icon: Truck, roles: ['owner', 'manager', 'delivery_staff'] },
-    { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'manager'] },
+    { path: '/registers', label: t('registers'), icon: LayoutGrid, roles: ['owner', 'admin', 'manager'] },
     { path: backOfficePath, label: t('admin'), icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'cashier', 'inventory_manager', 'purchase_manager', 'accountant'] },
   ];
 
@@ -213,7 +213,7 @@ export const Navbar: React.FC = () => {
         </div>
 
         {/* Desktop Navigation Tabs */}
-        <nav className="hidden xl:flex items-center gap-1">
+        <nav className="hidden lg:flex items-center gap-1">
           {navItems.filter((item) => !user || item.roles.includes(user.role)).map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname.startsWith(item.path);
@@ -251,20 +251,6 @@ export const Navbar: React.FC = () => {
               <span className="hidden sm:inline">Scan barcode</span>
             </Link>
           )}
-          {/* Shift status */}
-          <Link
-            to="/login"
-            className="hidden md:inline-flex items-center justify-center min-h-[40px] px-5 py-2 rounded-lg border border-[#2E3138] text-xs font-bold hover:bg-[#F7F7F7] focus-visible:ring-2 focus-visible:ring-[#E21B70]"
-          >
-            Log in
-          </Link>
-          <Link
-            to="/pos?delivery=signup"
-            className="hidden xl:inline-flex items-center justify-center min-h-[40px] px-5 py-2 rounded-lg bg-[#E21B70] hover:bg-[#C91661] text-white text-xs font-bold focus-visible:ring-2 focus-visible:ring-[#E21B70] focus-visible:ring-offset-2"
-          >
-            Sign up for free delivery
-          </Link>
-
           {/* Sync status */}
           <button
             data-navbar-sync
@@ -314,7 +300,7 @@ export const Navbar: React.FC = () => {
           </button>
 
           {/* User profile info */}
-          <div className="hidden">
+          <div className="hidden lg:flex items-center gap-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] px-2.5 py-1.5">
             <div className="w-8 h-8 rounded-full bg-[#E6F4EA] border border-[#B7E1CD] flex items-center justify-center text-[#0D5C3A] font-bold text-xs">
               {user?.name ? user.name.charAt(0).toUpperCase() : <UserIcon className="w-4 h-4" />}
             </div>
@@ -346,7 +332,7 @@ export const Navbar: React.FC = () => {
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
             aria-expanded={mobileMenuOpen}
-            className="md:hidden w-11 h-11 flex items-center justify-center rounded-xl text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
+            className="lg:hidden w-11 h-11 flex items-center justify-center rounded-xl text-[#0F172A] hover:bg-[#F1F5F9] transition-colors"
           >
             {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
@@ -355,7 +341,7 @@ export const Navbar: React.FC = () => {
 
       {/* Mobile Drawer Menu */}
       {mobileMenuOpen && (
-        <div className="md:hidden border-t border-[#E2E8F0] bg-white px-4 py-3 space-y-2">
+        <div className="lg:hidden border-t border-[#E2E8F0] bg-white px-4 py-3 space-y-2">
           {branches.length > 0 && (
             <label className="block text-xs font-bold text-[#475569]">
               <span className="block mb-1.5">Active outlet</span>

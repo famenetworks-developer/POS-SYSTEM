@@ -5,10 +5,11 @@ import { NumericKeypad } from '../../components/ui/NumericKeypad';
 import { ShoppingBag, KeyRound, Mail, Sparkles, ShieldCheck } from 'lucide-react';
 import { api } from '../../lib/api';
 import { Branch } from '../../types';
+import { homeForRole } from '../../lib/rbac';
 
 export const LoginView: React.FC = () => {
   const navigate = useNavigate();
-  const { login, pinLogin } = useAuth();
+  const { login, pinLogin, user, isAuthenticated } = useAuth();
   const [tab, setTab] = useState<'pin' | 'email'>('email');
 
   // Email form
@@ -22,6 +23,12 @@ export const LoginView: React.FC = () => {
 
   const [error, setError] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      navigate(homeForRole(user.role), { replace: true });
+    }
+  }, [isAuthenticated, navigate, user]);
 
   useEffect(() => {
     api
@@ -40,8 +47,8 @@ export const LoginView: React.FC = () => {
     setError('');
     setIsSubmitting(true);
     try {
-      await login(email, password);
-      navigate('/pos');
+      const signedInUser = await login(email, password);
+      navigate(homeForRole(signedInUser.role), { replace: true });
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -60,8 +67,8 @@ export const LoginView: React.FC = () => {
     setError('');
     setIsSubmitting(true);
     try {
-      await pinLogin(selectedBranchId, pin);
-      navigate('/pos');
+      const signedInUser = await pinLogin(selectedBranchId, pin);
+      navigate(homeForRole(signedInUser.role), { replace: true });
     } catch (err: any) {
       setError(err.message || 'Invalid cashier PIN');
       setPin('');

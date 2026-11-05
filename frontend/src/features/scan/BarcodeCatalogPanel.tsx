@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Barcode, ChevronUp, Search, X } from 'lucide-react';
 import { ApiError } from '../../lib/api';
 import { canEncodeCode128, encodeCode128 } from '../../lib/code128';
 import { formatMoney } from '../../lib/money';
+import { wsHub } from '../../lib/ws';
 import { MenuItem } from '../../types';
 import { loadActiveProducts, productCode } from './productBarcodes';
 
@@ -83,21 +84,40 @@ export const BarcodeCatalogPanel: React.FC<{ open: boolean; onClose: () => void 
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const loadStartedRef = useRef(false);
+  const requestRef = useRef(0);
   const top = useNavbarBottom();
 
-  // Load products the first time the panel opens.
-  useEffect(() => {
-    if (!open || loadStartedRef.current) return;
-    loadStartedRef.current = true;
+  // Loads the product list. Only the newest request may update state, so a slow older reply can't win.
+  const reload = useCallback(() => {
+    const requestId = ++requestRef.current;
     loadActiveProducts()
-      .then(setItems)
-      .catch((err) => {
-        loadStartedRef.current = false; // allow a retry on the next open
-        setError(err instanceof ApiError ? err.message : 'Could not load products');
+      .then((rows) => {
+        if (requestId !== requestRef.current) return;
+        setItems(rows);
+        setError('');
       })
-      .finally(() => setLoaded(true));
-  }, [open]);
+      .catch((err) => {
+        if (requestId === requestRef.current) setError(err instanceof ApiError ? err.message : 'Could not load products');
+      })
+      .finally(() => {
+        if (requestId === requestRef.current) setLoaded(true);
+      });
+  }, []);
+
+  // A fresh list every time the panel opens. While it is open, products added or edited anywhere
+  // in the store ("product.changed") appear straight away, and a reconnect catches up on missed changes.
+  useEffect(() => {
+    if (!open) return;
+    reload();
+    const offChanged = wsHub.subscribe('product.changed', reload);
+    const offConnection = wsHub.subscribe('connection', (connected: boolean) => {
+      if (connected) reload();
+    });
+    return () => {
+      offChanged();
+      offConnection();
+    };
+  }, [open, reload]);
 
   // Esc hides an open barcode first, then closes the panel.
   useEffect(() => {

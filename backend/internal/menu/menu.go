@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"restoflow/internal/audit"
 	"restoflow/internal/middleware"
@@ -194,6 +196,62 @@ func (s *MenuService) SuggestByCode(ctx context.Context, restID, prefix string, 
 		suggestions = append(suggestions, sg)
 	}
 	return suggestions, rows.Err()
+}
+
+// querier is satisfied by both *pgxpool.Pool and pgx.Tx.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// codeOwner returns the name of another active product in the store that already uses code as its
+// barcode, extra barcode or SKU (all three are matched by a scan), or "" when the code is free.
+func codeOwner(ctx context.Context, q querier, restID, code, excludeID string) (string, error) {
+	var name string
+	err := q.QueryRow(ctx, `
+		SELECT m.name_en FROM menu_items m
+		WHERE m.restaurant_id = $1 AND m.is_active = TRUE AND m.id::text <> $3
+		  AND (m.barcode = $2 OR m.sku = $2 OR EXISTS (
+		        SELECT 1 FROM product_barcodes pb WHERE pb.product_id = m.id AND pb.barcode = $2))
+		LIMIT 1`, restID, code, excludeID).Scan(&name)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return name, err
+}
+
+// codesAvailable writes a 409 response and returns false when the barcode or SKU is already used by
+// another product, so one scan can never match two products. excludeID is the product being edited.
+func codesAvailable(ctx context.Context, w http.ResponseWriter, q querier, restID, excludeID, barcode, sku string) bool {
+	for _, c := range []struct{ field, label, code string }{
+		{"barcode", "Barcode", barcode},
+		{"sku", "SKU", sku},
+	} {
+		if c.code == "" {
+			continue
+		}
+		owner, err := codeOwner(ctx, q, restID, c.code, excludeID)
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "CODE_CHECK_FAILED", "Could not check the product codes", nil)
+			return false
+		}
+		if owner != "" {
+			middleware.JSONError(w, http.StatusConflict, "DUPLICATE_CODE",
+				fmt.Sprintf("%s %s is already used by %q", c.label, c.code, owner),
+				map[string]string{"field": c.field, "code": c.code, "product": owner})
+			return false
+		}
+	}
+	return true
+}
+
+// isUniqueViolation reports a unique-index error (e.g. two people saving the same barcode at once).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+func duplicateCodeError(w http.ResponseWriter) {
+	middleware.JSONError(w, http.StatusConflict, "DUPLICATE_CODE", "This barcode is already used by another product", nil)
 }
 
 func (s *MenuService) GetItemByBarcode(ctx context.Context, restID, barcode string) (*models.MenuItem, error) {
@@ -433,12 +491,18 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
 			return
 		}
+		body.Barcode = strings.TrimSpace(body.Barcode)
+		body.SKU = strings.TrimSpace(body.SKU)
 		tx, err := s.pool.Begin(req.Context())
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "TX_ERROR", err.Error(), nil)
 			return
 		}
 		defer tx.Rollback(req.Context())
+
+		if !codesAvailable(req.Context(), w, tx, restID, "", body.Barcode, body.SKU) {
+			return
+		}
 
 		taxClass := body.TaxClass
 		if taxClass == "" {
@@ -474,6 +538,10 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			body.Barcode, body.ShelfLocation, body.Department, body.IsWeighted, body.IsHotDeal, body.IsPopular, body.IsNewArrival,
 			body.TrackStock, body.StockQuantity, body.ReorderLevel,
 		).Scan(&itemID)
+		if isUniqueViolation(err) {
+			duplicateCodeError(w)
+			return
+		}
 		if err != nil {
 			middleware.JSONError(w, http.StatusBadRequest, "CREATE_FAILED", err.Error(), nil)
 			return
@@ -498,6 +566,8 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			middleware.JSONError(w, http.StatusInternalServerError, "COMMIT_ERROR", err.Error(), nil)
 			return
 		}
+		// Open scan pages refresh their barcode list.
+		s.hub.BroadcastRestaurant(restID, "product.changed", map[string]string{"item_id": itemID, "action": "created"})
 		middleware.JSONSuccess(w, http.StatusCreated, map[string]interface{}{"id": itemID, "name": body.NameEN}, nil)
 	})
 
@@ -534,7 +604,20 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			return
 		}
 
-		_, err := s.pool.Exec(req.Context(), `
+		body.Barcode = strings.TrimSpace(body.Barcode)
+		body.SKU = strings.TrimSpace(body.SKU)
+		tx, err := s.pool.Begin(req.Context())
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "TX_ERROR", err.Error(), nil)
+			return
+		}
+		defer tx.Rollback(req.Context())
+
+		if !codesAvailable(req.Context(), w, tx, restID, itemID, body.Barcode, body.SKU) {
+			return
+		}
+
+		tag, err := tx.Exec(req.Context(), `
 			UPDATE menu_items SET
 				category_id = $1, name_en = $2, name_bn = $3, sku = NULLIF($4, ''), brand = $5,
 				unit = $6, package_size = $7, base_price_minor = $8, regular_price_minor = $9,
@@ -551,19 +634,43 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			body.TrackStock, body.StockQuantity, body.ReorderLevel, body.IsAvailable,
 			itemID, restID,
 		)
+		if isUniqueViolation(err) {
+			duplicateCodeError(w)
+			return
+		}
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "UPDATE_FAILED", err.Error(), nil)
 			return
 		}
+		if tag.RowsAffected() == 0 {
+			middleware.JSONError(w, http.StatusNotFound, "NOT_FOUND", "Product not found", nil)
+			return
+		}
 
+		// The old main barcode must stop matching this product once it is changed or removed.
+		if _, err := tx.Exec(req.Context(), `
+			DELETE FROM product_barcodes
+			WHERE restaurant_id = $1 AND product_id = $2 AND is_primary = TRUE AND barcode <> $3
+		`, restID, itemID, body.Barcode); err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "UPDATE_FAILED", err.Error(), nil)
+			return
+		}
 		if body.Barcode != "" {
-			_, _ = s.pool.Exec(req.Context(), `
+			if _, err := tx.Exec(req.Context(), `
 				INSERT INTO product_barcodes (restaurant_id, product_id, barcode, is_primary)
 				VALUES ($1, $2, $3, TRUE)
 				ON CONFLICT (restaurant_id, barcode) DO NOTHING
-			`, restID, itemID, body.Barcode)
+			`, restID, itemID, body.Barcode); err != nil {
+				middleware.JSONError(w, http.StatusInternalServerError, "UPDATE_FAILED", err.Error(), nil)
+				return
+			}
 		}
 
+		if err := tx.Commit(req.Context()); err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "COMMIT_ERROR", err.Error(), nil)
+			return
+		}
+		s.hub.BroadcastRestaurant(restID, "product.changed", map[string]string{"item_id": itemID, "action": "updated"})
 		middleware.JSONSuccess(w, http.StatusOK, map[string]string{"status": "updated"}, nil)
 	})
 

@@ -94,6 +94,62 @@ func (s *OrderService) getNextCounter(ctx context.Context, tx pgx.Tx, branchID, 
 	return val, err
 }
 
+// PaymentError is a payment the server refuses (short, zero, unknown method...).
+type PaymentError struct{ Message string }
+
+func (e *PaymentError) Error() string { return e.Message }
+
+// validatePayments checks that the customer pays the full amount due, no more and no less,
+// with the store's active payment methods, and that cash handed over covers the cash part.
+func validatePayments(ctx context.Context, tx pgx.Tx, restID string, req PayRequest, dueMinor int64) error {
+	if dueMinor <= 0 {
+		if len(req.Payments) > 0 {
+			return &PaymentError{"Nothing is due on this sale"}
+		}
+		return nil
+	}
+	if len(req.Payments) == 0 {
+		return &PaymentError{fmt.Sprintf("Payment of ৳%.2f is required", float64(dueMinor)/100)}
+	}
+
+	active := map[string]bool{}
+	rows, err := tx.Query(ctx, "SELECT code FROM payment_methods WHERE restaurant_id = $1 AND is_active = TRUE", restID)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var code string
+		if rows.Scan(&code) == nil {
+			active[code] = true
+		}
+	}
+	rows.Close()
+
+	var sum, cashMinor int64
+	for _, p := range req.Payments {
+		if p.AmountMinor <= 0 {
+			return &PaymentError{"Each payment amount must be more than ৳0"}
+		}
+		if !active[p.MethodCode] {
+			return &PaymentError{fmt.Sprintf("Payment method %q is not available", p.MethodCode)}
+		}
+		sum += p.AmountMinor
+		if p.MethodCode == "cash" {
+			cashMinor += p.AmountMinor
+		}
+	}
+	if sum < dueMinor {
+		return &PaymentError{fmt.Sprintf("The customer must pay the full ৳%.2f; only ৳%.2f was entered", float64(dueMinor)/100, float64(sum)/100)}
+	}
+	if sum > dueMinor {
+		return &PaymentError{fmt.Sprintf("Payments of ৳%.2f are more than the ৳%.2f due", float64(sum)/100, float64(dueMinor)/100)}
+	}
+	if req.CashReceived > 0 && req.CashReceived < cashMinor {
+		return &PaymentError{fmt.Sprintf("Cash received ৳%.2f is less than the ৳%.2f cash due", float64(req.CashReceived)/100, float64(cashMinor)/100)}
+	}
+	return nil
+}
+
 // CouponError is a coupon problem the cashier can act on (expired, used up, minimum spend...).
 type CouponError struct{ Message string }
 
@@ -515,6 +571,10 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 
 	if status == "paid" {
 		return nil, fmt.Errorf("order is already paid")
+	}
+	// The customer pays the full amount due: no less, no more.
+	if err := validatePayments(ctx, tx, restID, req, totalMinor-paidMinor); err != nil {
+		return nil, err
 	}
 
 	// Cash goes into the drawer of whoever takes the payment, so they must have an open shift.
@@ -1255,6 +1315,11 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 		}
 
 		res, err := s.Pay(req.Context(), restID, claims.UserID, orderID, body)
+		var payErr *PaymentError
+		if errors.As(err, &payErr) {
+			middleware.JSONError(w, http.StatusBadRequest, "PAYMENT_INVALID", payErr.Message, nil)
+			return
+		}
 		if errors.Is(err, ErrNoOpenShift) {
 			middleware.JSONError(w, http.StatusConflict, "SHIFT_REQUIRED", "Open a shift before taking payment.", nil)
 			return

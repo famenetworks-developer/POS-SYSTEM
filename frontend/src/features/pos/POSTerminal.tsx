@@ -451,6 +451,11 @@ export const POSTerminal: React.FC = () => {
   const grandTotalMinor = Math.round(rawTotalMinor / 100) * 100;
   const roundOffMinor = grandTotalMinor - rawTotalMinor; // negative when rounded down
 
+  // Cash: the customer must hand over at least the full bill. Empty means exact cash.
+  const cashTenderedMinor = paymentMethod === 'cash' && cashTendered.trim() !== '' ? Math.round(parseFloat(cashTendered) * 100) : null;
+  const cashShortMinor =
+    cashTenderedMinor === null ? 0 : Number.isNaN(cashTenderedMinor) ? grandTotalMinor : Math.max(0, grandTotalMinor - cashTenderedMinor);
+
   // Checkout submission
   const handleCompleteSale = async () => {
     if (cart.length === 0) return;
@@ -482,7 +487,11 @@ export const POSTerminal: React.FC = () => {
       // Pay exactly the total the server calculated and recorded, so the payment, the
       // sale record and the receipt always agree.
       const serverTotalMinor: number = createdOrder.total_minor;
-      const tenderedMinor = cashTendered ? Math.round(parseFloat(cashTendered) * 100) : serverTotalMinor;
+      const tenderedMinor = cashTenderedMinor ?? serverTotalMinor;
+      if (paymentMethod === 'cash' && tenderedMinor < serverTotalMinor) {
+        alert(`The customer must pay the full ${formatMoney(serverTotalMinor, restaurant?.currency)}.`);
+        return;
+      }
       const payRes = await api.post(`/orders/${createdOrder.id}/pay`, {
         payments: [
           {
@@ -491,7 +500,8 @@ export const POSTerminal: React.FC = () => {
             reference: paymentRef,
           },
         ],
-        cash_received: tenderedMinor,
+        // Only cash has an amount handed over; other methods pay the exact total.
+        cash_received: paymentMethod === 'cash' ? tenderedMinor : 0,
       });
 
       // Receipt shows the recorded figures.
@@ -1355,6 +1365,11 @@ export const POSTerminal: React.FC = () => {
                     Exact
                   </button>
                 </div>
+                {cashShortMinor > 0 && (
+                  <p role="alert" className="text-xs font-bold text-[#DC2626] text-right">
+                    {formatMoney(cashShortMinor, restaurant?.currency)} short. The customer must pay the full {formatMoney(grandTotalMinor, restaurant?.currency)}.
+                  </p>
+                )}
                 {cashTendered && parseFloat(cashTendered) * 100 > grandTotalMinor && (
                   <p className="text-xs font-bold text-[#0D5C3A] text-right">
                     Change to Return: {formatMoney(Math.round(parseFloat(cashTendered) * 100 - grandTotalMinor), restaurant?.currency)}
@@ -1379,7 +1394,7 @@ export const POSTerminal: React.FC = () => {
 
             <button
               onClick={handleCompleteSale}
-              disabled={isSubmitting}
+              disabled={isSubmitting || cashShortMinor > 0}
               className="w-full py-3 rounded-xl bg-[#0D5C3A] hover:bg-[#083D26] text-white font-black text-xs sm:text-sm shadow-lg shadow-[#0D5C3A]/25 disabled:opacity-40 transition-all flex items-center justify-center gap-2"
             >
               {isSubmitting ? 'Processing Sale...' : 'Confirm Payment & Print Receipt'}

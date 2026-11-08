@@ -41,7 +41,7 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(total_minor), 0), COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= $3
+			  AND status IN ('paid', 'refunded') AND opened_at >= $3
 		`, restID, branchID, todayStart).Scan(&todaySalesMinor, &todayOrders)
 
 		var todayAvgBillMinor int64 = 0
@@ -56,28 +56,32 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(total_minor), 0), COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= $3
+			  AND status IN ('paid', 'refunded') AND opened_at >= $3
 		`, restID, branchID, monthStart).Scan(&monthSalesMinor, &monthOrders)
 
 		// 3. Month Net Profit (Revenue net - COGS - Expenses)
 		var monthVATMinor int64 = 0
 		var monthRefundsMinor int64 = 0
+		var monthRefundVATMinor int64 = 0
 		_ = s.pool.QueryRow(req.Context(), `
 			SELECT COALESCE(SUM(tax_minor), 0)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= $3
+			  AND status IN ('paid', 'refunded') AND opened_at >= $3
 		`, restID, branchID, monthStart).Scan(&monthVATMinor)
 
 		_ = s.pool.QueryRow(req.Context(), `
-			SELECT COALESCE(SUM(r.amount_minor), 0)
+			SELECT COALESCE(SUM(r.amount_minor), 0),
+			       COALESCE(SUM(r.amount_minor * o.tax_minor / NULLIF(o.total_minor, 0)), 0)::bigint
 			FROM refunds r
 			JOIN orders o ON r.order_id = o.id
 			WHERE r.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
 			  AND r.created_at >= $3
-		`, restID, branchID, monthStart).Scan(&monthRefundsMinor)
+		`, restID, branchID, monthStart).Scan(&monthRefundsMinor, &monthRefundVATMinor)
 
-		monthRevenueNet := monthSalesMinor - monthVATMinor - monthRefundsMinor
+		// Sales above include refunded sales, so each refund is taken off exactly once.
+		// The VAT share of a refund is given back too, as it was never the store's revenue.
+		monthRevenueNet := monthSalesMinor - monthVATMinor - (monthRefundsMinor - monthRefundVATMinor)
 
 		// COGS
 		var monthCOGSMinor int64 = 0
@@ -202,7 +206,7 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT to_char(opened_at AT TIME ZONE $4::text, 'YYYY-MM-DD') as day, SUM(total_minor)::bigint, COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= $3
+			  AND status IN ('paid', 'refunded') AND opened_at >= $3
 			GROUP BY day
 			ORDER BY day ASC
 		`, restID, branchID, weekStart, loc.String())
@@ -281,20 +285,24 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(total_minor), 0), COALESCE(SUM(tax_minor), 0), COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid'
+			  AND status IN ('paid', 'refunded')
 			  AND opened_at >= $3 AND opened_at < $4
 		`, restID, branchID, startAt, endAt).Scan(&grossSalesMinor, &vatMinor, &ordersCount)
 
 		var refundsMinor int64 = 0
+		var refundVATMinor int64 = 0
 		_ = s.pool.QueryRow(req.Context(), `
-			SELECT COALESCE(SUM(r.amount_minor), 0)
+			SELECT COALESCE(SUM(r.amount_minor), 0),
+			       COALESCE(SUM(r.amount_minor * o.tax_minor / NULLIF(o.total_minor, 0)), 0)::bigint
 			FROM refunds r
 			JOIN orders o ON r.order_id = o.id
 			WHERE r.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
 			  AND r.created_at >= $3 AND r.created_at < $4
-		`, restID, branchID, startAt, endAt).Scan(&refundsMinor)
+		`, restID, branchID, startAt, endAt).Scan(&refundsMinor, &refundVATMinor)
 
-		revenueNet := grossSalesMinor - vatMinor - refundsMinor
+		// Gross sales include refunded sales, so each refund is taken off exactly once,
+		// together with its share of VAT.
+		revenueNet := grossSalesMinor - vatMinor - (refundsMinor - refundVATMinor)
 
 		var cogsMinor int64 = 0
 		_ = s.pool.QueryRow(req.Context(), `

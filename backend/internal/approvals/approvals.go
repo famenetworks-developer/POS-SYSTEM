@@ -3,6 +3,7 @@ package approvals
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"restoflow/internal/audit"
 	"restoflow/internal/middleware"
+	"restoflow/internal/orders"
 )
 
 type Service struct {
@@ -202,9 +204,15 @@ func (s *Service) executeOrder(tx pgx.Tx, typ, orderID, restID, approver, reques
 	ctx := context.Background()
 	switch typ {
 	case "refund":
+		// Same rules as a direct refund: a paid sale, refunded only once. The row is locked
+		// so two approved requests for the same sale cannot both refund it.
 		var total int64
-		if err := tx.QueryRow(ctx, "SELECT total_minor FROM orders WHERE id=$1 AND restaurant_id=$2 AND status='paid'", orderID, restID).Scan(&total); err != nil {
-			return err
+		var status string
+		if err := tx.QueryRow(ctx, "SELECT total_minor, status FROM orders WHERE id=$1 AND restaurant_id=$2 FOR UPDATE", orderID, restID).Scan(&total, &status); err != nil {
+			return fmt.Errorf("sale not found")
+		}
+		if msg := orders.RefundBlocked(ctx, tx, orderID, status); msg != "" {
+			return errors.New(msg)
 		}
 		if amount <= 0 || amount > total {
 			return fmt.Errorf("refund amount exceeds the paid order total")
@@ -217,11 +225,11 @@ func (s *Service) executeOrder(tx pgx.Tx, typ, orderID, restID, approver, reques
 		if _, err := tx.Exec(ctx, `INSERT INTO refunds(id,restaurant_id,order_id,amount_minor,reason,approved_by,restock,requested_by,approval_request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, refundID, restID, orderID, amount, reason, approver, payload.Restock, requester, approvalID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "UPDATE orders SET status='refunded' WHERE id=$1", orderID); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE orders SET status='refunded' WHERE id=$1 AND restaurant_id=$2", orderID, restID); err != nil {
 			return err
 		}
 		if payload.Restock {
-			_, err := tx.Exec(ctx, `UPDATE menu_items m SET stock_quantity=m.stock_quantity+x.qty,updated_at=NOW() FROM (SELECT item_id,SUM(qty) qty FROM order_items WHERE order_id=$1 AND item_id IS NOT NULL GROUP BY item_id)x WHERE m.id=x.item_id`, orderID)
+			_, err := tx.Exec(ctx, `UPDATE menu_items m SET stock_quantity=m.stock_quantity+x.qty,updated_at=NOW() FROM (SELECT item_id,SUM(qty) qty FROM order_items WHERE order_id=$1 AND item_id IS NOT NULL GROUP BY item_id)x WHERE m.id=x.item_id AND m.restaurant_id=$2`, orderID, restID)
 			if err != nil {
 				return err
 			}

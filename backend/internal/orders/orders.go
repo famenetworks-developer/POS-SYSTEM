@@ -161,6 +161,28 @@ func validatePayments(ctx context.Context, tx pgx.Tx, restID string, req PayRequ
 	return nil
 }
 
+// refundBlocked returns why a sale cannot be refunded ("" when it can). Only a paid sale can be
+// refunded, and only once. Call it with the order row locked (SELECT ... FOR UPDATE).
+func refundBlocked(ctx context.Context, tx pgx.Tx, orderID, status string) string {
+	if status == "refunded" {
+		return "This sale has already been refunded"
+	}
+	if status != "paid" {
+		return "Only paid sales can be refunded"
+	}
+	var refunded bool
+	_ = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM refunds WHERE order_id = $1)", orderID).Scan(&refunded)
+	if refunded {
+		return "This sale has already been refunded"
+	}
+	return ""
+}
+
+// RefundBlocked is refundBlocked for the approvals package (refunds approved from the queue).
+func RefundBlocked(ctx context.Context, tx pgx.Tx, orderID, status string) string {
+	return refundBlocked(ctx, tx, orderID, status)
+}
+
 // CouponError is a coupon problem the cashier can act on (expired, used up, minimum spend...).
 type CouponError struct{ Message string }
 
@@ -1263,12 +1285,42 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 			return
 		}
 
+		body.Reason = strings.TrimSpace(body.Reason)
+		if body.Reason == "" {
+			middleware.JSONError(w, http.StatusBadRequest, "REASON_REQUIRED", "A refund reason is required", nil)
+			return
+		}
+
 		tx, err := s.pool.Begin(req.Context())
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "DB_ERROR", err.Error(), nil)
 			return
 		}
 		defer tx.Rollback(req.Context())
+
+		// Lock the sale so two refunds of the same sale cannot both go through.
+		var status string
+		var totalMinor int64
+		err = tx.QueryRow(req.Context(), `
+			SELECT status, total_minor FROM orders WHERE id = $1 AND restaurant_id = $2 FOR UPDATE
+		`, orderID, restID).Scan(&status, &totalMinor)
+		if errors.Is(err, pgx.ErrNoRows) {
+			middleware.JSONError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "Sale not found", nil)
+			return
+		}
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "DB_ERROR", err.Error(), nil)
+			return
+		}
+		if msg := refundBlocked(req.Context(), tx, orderID, status); msg != "" {
+			middleware.JSONError(w, http.StatusConflict, "NOT_REFUNDABLE", msg, nil)
+			return
+		}
+		if body.AmountMinor < 1 || body.AmountMinor > totalMinor {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_AMOUNT",
+				fmt.Sprintf("The refund must be between ৳0.01 and the sale total of ৳%.2f", float64(totalMinor)/100), nil)
+			return
+		}
 
 		refundID := uuid.New().String()
 		_, err = tx.Exec(req.Context(), `
@@ -1280,8 +1332,10 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 			return
 		}
 
-		// Update order status
-		_, _ = tx.Exec(req.Context(), "UPDATE orders SET status = 'refunded' WHERE id = $1", orderID)
+		if _, err := tx.Exec(req.Context(), "UPDATE orders SET status = 'refunded' WHERE id = $1 AND restaurant_id = $2", orderID, restID); err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "REFUND_FAILED", err.Error(), nil)
+			return
+		}
 
 		// Restock items if requested
 		if body.Restock {
@@ -1302,8 +1356,8 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 
 				for _, ri := range itemsToRestock {
 					_, _ = tx.Exec(req.Context(), `
-						UPDATE menu_items SET stock_quantity = stock_quantity + $1, updated_at = NOW() WHERE id = $2
-					`, ri.qty, ri.id)
+						UPDATE menu_items SET stock_quantity = stock_quantity + $1, updated_at = NOW() WHERE id = $2 AND restaurant_id = $3
+					`, ri.qty, ri.id, restID)
 				}
 			}
 		}

@@ -40,6 +40,24 @@ func (s *ShiftService) MountRoutes(r chi.Router) {
 			return
 		}
 
+		if body.OpeningCashMinor < 0 {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_OPENING_CASH", "Opening cash cannot be negative", nil)
+			return
+		}
+		// The branch must belong to this store, and (except for owners/admins) be one the user works at.
+		var branchAllowed bool
+		_ = s.pool.QueryRow(req.Context(), `
+			SELECT EXISTS (
+				SELECT 1 FROM branches b
+				WHERE b.id::text = $1 AND b.restaurant_id = $2 AND b.is_active = TRUE
+				  AND ($3 IN ('owner', 'admin') OR EXISTS (
+				        SELECT 1 FROM user_branches ub WHERE ub.branch_id = b.id AND ub.user_id::text = $4))
+			)`, body.BranchID, restID, claims.Role, claims.UserID).Scan(&branchAllowed)
+		if !branchAllowed {
+			middleware.JSONError(w, http.StatusForbidden, "BRANCH_FORBIDDEN", "This branch is not assigned to your account", nil)
+			return
+		}
+
 		terminal := body.TerminalID
 		if terminal == "" {
 			terminal = "default"

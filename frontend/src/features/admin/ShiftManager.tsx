@@ -3,10 +3,11 @@ import { useAuth } from '../../context/AuthContext';
 import { Shift } from '../../types';
 import { api } from '../../lib/api';
 import { formatMoney } from '../../lib/money';
+import { ShiftBar } from '../pos/ShiftBar';
 import { Clock, AlertTriangle, CheckCircle2, ChevronRight, X, DollarSign, ShieldCheck } from 'lucide-react';
 
 export const ShiftManager: React.FC = () => {
-  const { restaurant, activeBranch } = useAuth();
+  const { user, restaurant, activeBranch } = useAuth();
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [selectedShift, setSelectedShift] = useState<any>(null);
   const [showDetailModal, setShowDetailModal] = useState<boolean>(false);
@@ -48,6 +49,12 @@ export const ShiftManager: React.FC = () => {
           Audit cashier registers, opening cash float, expected cash drawer totals, counted cash, and variance logs
         </p>
       </div>
+
+      {user?.role === 'cashier' && (
+        <div className="bg-white border border-[#E2E8F0] rounded-2xl overflow-hidden shadow-sm">
+          <ShiftBar onChange={loadShifts} />
+        </div>
+      )}
 
       <div className="bg-white border border-[#E2E8F0] rounded-2xl overflow-hidden shadow-sm">
         <div className="overflow-x-auto">

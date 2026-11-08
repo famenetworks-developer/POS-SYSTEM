@@ -92,12 +92,37 @@ func (s *OrderService) getNextCounter(ctx context.Context, tx pgx.Tx, branchID, 
 	return val, err
 }
 
+// ErrNoOpenShift is returned when someone tries to sell or take a payment without an open shift.
+var ErrNoOpenShift = errors.New("open a shift before selling: no open shift for you at this branch")
+
+// openShiftID returns the user's open shift at the branch, or nil when they have none.
+// Sales and their cash are linked to this shift so its expected cash stays correct.
+func openShiftID(ctx context.Context, tx pgx.Tx, restID, branchID, userID string) *string {
+	var id string
+	err := tx.QueryRow(ctx, `
+		SELECT id::text FROM shifts
+		WHERE restaurant_id = $1 AND branch_id::text = $2 AND cashier_id::text = $3 AND status = 'open'
+		ORDER BY opened_at DESC
+		LIMIT 1
+	`, restID, branchID, userID).Scan(&id)
+	if err != nil {
+		return nil
+	}
+	return &id
+}
+
 func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string, req CreateOrderRequest) (*models.Order, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+
+	// The shift is decided by the server, never taken from the request. No open shift, no sale.
+	req.ShiftID = openShiftID(ctx, tx, restID, req.BranchID, waiterID)
+	if req.ShiftID == nil {
+		return nil, ErrNoOpenShift
+	}
 
 	orderID := req.ID
 	if orderID == "" {
@@ -435,6 +460,13 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 		return nil, fmt.Errorf("order is already paid")
 	}
 
+	// Cash goes into the drawer of whoever takes the payment, so they must have an open shift.
+	payerShift := openShiftID(ctx, tx, restID, branchID, userID)
+	if payerShift == nil {
+		return nil, ErrNoOpenShift
+	}
+	shiftID = payerShift
+
 	var invoicePrefix string
 	_ = tx.QueryRow(ctx, "SELECT invoice_prefix FROM branches WHERE id = $1", branchID).Scan(&invoicePrefix)
 	if invoicePrefix == "" {
@@ -485,9 +517,9 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	// Update order to paid
 	_, err = tx.Exec(ctx, `
 		UPDATE orders
-		SET status = $1, paid_minor = $2, closed_at = $3
+		SET status = $1, paid_minor = $2, closed_at = $3, shift_id = COALESCE(shift_id, $5::uuid)
 		WHERE id = $4
-	`, orderStatus, newPaidMinor, now, orderID)
+	`, orderStatus, newPaidMinor, now, orderID, shiftID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update order status: %w", err)
 	}
@@ -729,6 +761,10 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 		}
 
 		order, err := s.CreateOrder(req.Context(), restID, claims.UserID, body)
+		if errors.Is(err, ErrNoOpenShift) {
+			middleware.JSONError(w, http.StatusConflict, "SHIFT_REQUIRED", "Open a shift before selling.", nil)
+			return
+		}
 		if err != nil {
 			middleware.JSONError(w, http.StatusBadRequest, "ORDER_CREATION_FAILED", err.Error(), nil)
 			return
@@ -1143,6 +1179,10 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 		}
 
 		res, err := s.Pay(req.Context(), restID, claims.UserID, orderID, body)
+		if errors.Is(err, ErrNoOpenShift) {
+			middleware.JSONError(w, http.StatusConflict, "SHIFT_REQUIRED", "Open a shift before taking payment.", nil)
+			return
+		}
 		if err != nil {
 			middleware.JSONError(w, http.StatusBadRequest, "PAYMENT_FAILED", err.Error(), nil)
 			return

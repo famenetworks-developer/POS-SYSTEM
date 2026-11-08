@@ -8,6 +8,8 @@ import { t } from '../../lib/i18n';
 import { wsHub } from '../../lib/ws';
 import { getProductFallback, getProductImage } from '../../lib/productImages';
 import { ReceiptModal } from '../../components/ui/ReceiptModal';
+import { ShiftBar } from './ShiftBar';
+import { BasketScanResult, CameraBasketScanner } from './CameraBasketScanner';
 import {
   Search,
   Plus,
@@ -28,6 +30,7 @@ import {
   RotateCcw,
   Scale,
   Barcode,
+  ScanBarcode,
   UserPlus,
   Tag,
   AlertTriangle,
@@ -76,6 +79,7 @@ export const POSTerminal: React.FC = () => {
   const [showAllProducts, setShowAllProducts] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [scanFlash, setScanFlash] = useState<boolean>(false);
+  const [showCameraScanner, setShowCameraScanner] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Sales State
@@ -105,6 +109,10 @@ export const POSTerminal: React.FC = () => {
   const [cashTendered, setCashTendered] = useState<string>('');
   const [paymentRef, setPaymentRef] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  // Bumped after each sale so the shift bar reloads the cash that should be in the drawer.
+  const [shiftRefresh, setShiftRefresh] = useState(0);
+  // Selling is blocked until the cashier has an open shift (the server enforces this too).
+  const [hasOpenShift, setHasOpenShift] = useState(false);
 
   // Held Sales Drawer
   const [heldSales, setHeldSales] = useState<HeldSale[]>([]);
@@ -179,7 +187,7 @@ export const POSTerminal: React.FC = () => {
         }
       } else if (e.key === 'F9') {
         e.preventDefault();
-        if (cart.length > 0) {
+        if (cart.length > 0 && hasOpenShift) {
           setShowCheckoutModal(true);
         }
       } else if (e.key === 'Escape') {
@@ -192,41 +200,54 @@ export const POSTerminal: React.FC = () => {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [cart]);
+  }, [cart, hasOpenShift]);
 
-  // Barcode rapid scanner handler
+  // Finds a product by barcode (main or extra) or SKU: the loaded catalogue first, then the server.
+  const findProductByCode = async (code: string): Promise<Product | null> => {
+    const found = products.find(
+      (p) =>
+        p.barcode === code ||
+        (p.barcodes && p.barcodes.includes(code)) ||
+        (p.sku && p.sku.toLowerCase() === code.toLowerCase())
+    );
+    if (found) return found;
+    try {
+      return (await api.get<Product>(`/items/barcode/${encodeURIComponent(code)}`)) || null;
+    } catch {
+      return null;
+    }
+  };
+
+  // Barcode rapid scanner handler (USB scanners type the code and press Enter)
   const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       const code = searchQuery.trim();
       if (!code) return;
 
-      // Check exact match in local product list by barcode or SKU
-      const found = products.find(
-        (p) =>
-          p.barcode === code ||
-          (p.barcodes && p.barcodes.includes(code)) ||
-          (p.sku && p.sku.toLowerCase() === code.toLowerCase())
-      );
-
-      if (found) {
-        addProductToCart(found);
+      const product = await findProductByCode(code);
+      if (product) {
+        addProductToCart(product);
         triggerScanFeedback();
         setSearchQuery('');
-      } else {
-        // Try backend barcode lookup
-        try {
-          const item = await api.get(`/items/barcode/${encodeURIComponent(code)}`);
-          if (item) {
-            addProductToCart(item);
-            triggerScanFeedback();
-            setSearchQuery('');
-          }
-        } catch {
-          // If not exact barcode, keep search filter active
-        }
       }
+      // Otherwise keep the text as a search filter.
     }
+  };
+
+  // Phone/tablet camera: every product read is added to the basket.
+  const handleCameraCode = async (code: string): Promise<BasketScanResult> => {
+    if (code.length > 64 || /\s/.test(code)) {
+      return { ok: false, message: 'That is not a product barcode' };
+    }
+    const product = await findProductByCode(code);
+    if (!product) return { ok: false, message: `No product with code ${code}` };
+    addProductToCart(product);
+    if (product.is_weighted) {
+      return { ok: true, message: `${product.name_en}: enter the weight`, close: true };
+    }
+    triggerScanFeedback();
+    return { ok: true, message: `Added ${product.name_en} · ${formatMoney(product.base_price_minor, restaurant?.currency)}` };
   };
 
   const triggerScanFeedback = () => {
@@ -457,6 +478,8 @@ export const POSTerminal: React.FC = () => {
       setReceiptInvoiceNo(payRes.invoice_no);
       setReceiptChange(payRes.change_due || (tenderedMinor > grandTotalMinor ? tenderedMinor - grandTotalMinor : 0));
 
+      setShiftRefresh((n) => n + 1);
+
       // Reset cart
       handleClearCart();
       setShowCheckoutModal(false);
@@ -667,6 +690,14 @@ export const POSTerminal: React.FC = () => {
               className="w-full bg-white border border-[#D5D8DC] rounded-full pl-11 pr-4 py-3 text-sm font-normal text-[#2E3138] placeholder-[#6B7175] focus:bg-white focus:border-[#2E3138] focus:outline-none focus:ring-0 transition-colors"
             />
           </div>
+          <button
+            type="button"
+            onClick={() => setShowCameraScanner(true)}
+            title="Scan items into the basket with this device's camera"
+            className="inline-flex shrink-0 items-center justify-center gap-2 min-h-[46px] rounded-full bg-[#E21B70] px-5 text-sm font-bold text-white hover:bg-[#C91661]"
+          >
+            <ScanBarcode className="w-[18px] h-[18px]" /> Scan with camera
+          </button>
 
           {/* Quick Filter Buttons */}
           <div className="hidden">
@@ -964,6 +995,7 @@ export const POSTerminal: React.FC = () => {
 
       {/* RIGHT: Persistent Checkout Cart */}
       <div className={`pos-cart-panel w-full lg:w-[340px] xl:w-[365px] flex flex-col h-full bg-white border-l border-[#e8e8e8] overflow-hidden ${mobileTab === 'cart' ? 'flex' : 'hidden lg:flex'}`}>
+        <ShiftBar refreshKey={shiftRefresh} onShiftChange={setHasOpenShift} />
         {/* Cart Header */}
         <div className="p-4 border-b border-[#eeeeee] bg-white flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -1159,11 +1191,13 @@ export const POSTerminal: React.FC = () => {
           {/* Checkout Button */}
           <button
             onClick={() => setShowCheckoutModal(true)}
-            disabled={cart.length === 0}
+            disabled={cart.length === 0 || !hasOpenShift}
             className="w-full py-3 rounded-xl text-xs sm:text-sm font-black bg-[#0D5C3A] hover:bg-[#083D26] text-white shadow-lg shadow-[#0D5C3A]/25 disabled:opacity-40 transition-all flex items-center justify-center gap-2"
           >
             <Banknote className="w-4 h-4" />
-            <span>PAY {formatMoney(grandTotalMinor, restaurant?.currency)} (F9)</span>
+            <span>
+              {hasOpenShift ? `PAY ${formatMoney(grandTotalMinor, restaurant?.currency)} (F9)` : 'Open a shift to sell'}
+            </span>
           </button>
         </div>
       </div>
@@ -1557,6 +1591,14 @@ export const POSTerminal: React.FC = () => {
       )}
 
       {/* Receipt Modal (Upon Successful Sale) */}
+      {showCameraScanner && (
+        <CameraBasketScanner
+          onCode={handleCameraCode}
+          onClose={() => setShowCameraScanner(false)}
+          basketCount={cart.reduce((s, c) => s + c.qty, 0)}
+        />
+      )}
+
       {completedOrder && (
         <ReceiptModal
           order={completedOrder}

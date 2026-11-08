@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api, ApiError } from '../../lib/api';
-import { BarcodeCamera, DetectedBarcode, listCameras, startBarcodeCamera } from '../../lib/barcodeCamera';
+import { BarcodeCamera, cameraErrorMessage, DetectedBarcode, listCameras, startBarcodeCamera } from '../../lib/barcodeCamera';
 import { formatMoney } from '../../lib/money';
 import { wsHub } from '../../lib/ws';
 import { getProductImage } from '../../lib/productImages';
@@ -49,16 +49,6 @@ const ACTIVITY_LIMIT = 50;
 
 const isProductCode = (code: string) => code.length <= MAX_PRODUCT_CODE_LENGTH && !/[\s/]/.test(code);
 
-const cameraErrorMessage = (err: unknown): string => {
-  const name = (err as { name?: string })?.name;
-  if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    return 'Camera access needs a secure connection. Open this page over HTTPS (or on localhost) to scan with the camera.';
-  }
-  if (name === 'NotAllowedError') return 'Camera permission was denied. Allow camera access in your browser settings and try again.';
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No camera was found on this device.';
-  if (name === 'NotReadableError') return 'The camera is being used by another app. Close it and try again.';
-  return 'Could not start the camera.';
-};
 
 export const BarcodeScanView: React.FC = () => {
   const { user, restaurant, activeBranch } = useAuth();

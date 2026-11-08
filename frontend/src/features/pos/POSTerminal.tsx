@@ -446,9 +446,10 @@ export const POSTerminal: React.FC = () => {
   const vatMinor = Math.round(taxableBase * 0.05);
   const deliveryCostMinor = orderType === 'delivery' ? deliveryFeeMinor : 0;
   const rawTotalMinor = taxableBase + vatMinor + deliveryCostMinor;
-  // Round to nearest whole BDT (100 minor units)
-  const roundOffMinor = (100 - (rawTotalMinor % 100)) % 100;
-  const grandTotalMinor = rawTotalMinor + roundOffMinor;
+  // Round to the nearest whole taka, half up (৳44.10 → ৳44, ৳44.50 → ৳45), the same rule
+  // the server uses (billing.CalculateBill), so the screen shows what will be recorded.
+  const grandTotalMinor = Math.round(rawTotalMinor / 100) * 100;
+  const roundOffMinor = grandTotalMinor - rawTotalMinor; // negative when rounded down
 
   // Checkout submission
   const handleCompleteSale = async () => {
@@ -478,31 +479,30 @@ export const POSTerminal: React.FC = () => {
 
       const createdOrder = await api.post('/orders', orderBody);
 
-      // Submit payment
-      const tenderedMinor = cashTendered ? Math.round(parseFloat(cashTendered) * 100) : grandTotalMinor;
+      // Pay exactly the total the server calculated and recorded, so the payment, the
+      // sale record and the receipt always agree.
+      const serverTotalMinor: number = createdOrder.total_minor;
+      const tenderedMinor = cashTendered ? Math.round(parseFloat(cashTendered) * 100) : serverTotalMinor;
       const payRes = await api.post(`/orders/${createdOrder.id}/pay`, {
         payments: [
           {
             method_code: paymentMethod,
-            amount_minor: grandTotalMinor,
+            amount_minor: serverTotalMinor,
             reference: paymentRef,
           },
         ],
         cash_received: tenderedMinor,
       });
 
-      // Show receipt modal
+      // Receipt shows the recorded figures.
       setCompletedOrder({
         ...createdOrder,
-        total_minor: grandTotalMinor,
-        subtotal_minor: cartSubtotalMinor,
-        tax_minor: vatMinor,
         table_name: selectedRegister?.name || 'Counter 01',
         customer_name: selectedCustomer?.name,
         waiter_name: user?.name,
       });
       setReceiptInvoiceNo(payRes.invoice_no);
-      setReceiptChange(payRes.change_due || (tenderedMinor > grandTotalMinor ? tenderedMinor - grandTotalMinor : 0));
+      setReceiptChange(payRes.change_due || (tenderedMinor > serverTotalMinor ? tenderedMinor - serverTotalMinor : 0));
 
       setShiftRefresh((n) => n + 1);
 
@@ -1187,10 +1187,10 @@ export const POSTerminal: React.FC = () => {
                 <span>{formatMoney(deliveryCostMinor, restaurant?.currency)}</span>
               </div>
             )}
-            {roundOffMinor > 0 && (
+            {roundOffMinor !== 0 && (
               <div className="flex justify-between text-[10px] text-[#94A3B8]">
                 <span>Rounding:</span>
-                <span>{formatMoney(roundOffMinor, restaurant?.currency)}</span>
+                <span>{roundOffMinor < 0 ? '-' : '+'}{formatMoney(Math.abs(roundOffMinor), restaurant?.currency)}</span>
               </div>
             )}
             <div className="flex justify-between text-base font-black text-[#0D5C3A] border-t border-[#CBD5E1] pt-1.5 mt-1">

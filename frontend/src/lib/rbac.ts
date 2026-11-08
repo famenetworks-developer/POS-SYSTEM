@@ -21,7 +21,8 @@ const access: Record<AppArea, Role[]> = {
   reports: ['owner', 'accountant'],
   staff: ['owner', 'admin'],
   shifts: ['owner', 'manager', 'cashier'],
-  settings: ['owner', 'admin'],
+  // Managers see only the time zone on the Settings page.
+  settings: ['owner', 'admin', 'manager'],
   platform: ['super_admin'],
   // Barcode scan page; the /api/v1/scans endpoints enforce the same roles.
   scan: ['super_admin', 'cashier', 'inventory_manager'],

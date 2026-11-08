@@ -12,6 +12,7 @@ import (
 	"restoflow/internal/billing"
 	"restoflow/internal/middleware"
 	"restoflow/internal/models"
+	"restoflow/internal/platform"
 )
 
 type InventoryService struct {
@@ -458,7 +459,7 @@ func (s *InventoryService) MountRoutes(r chi.Router) {
 
 		expDate := body.Date
 		if expDate == "" {
-			expDate = time.Now().Format("2006-01-02")
+			expDate = time.Now().In(platform.StoreLocation(req.Context(), s.pool, restID)).Format("2006-01-02")
 		}
 
 		expID := uuid.New().String()

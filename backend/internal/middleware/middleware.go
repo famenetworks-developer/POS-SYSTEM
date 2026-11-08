@@ -170,6 +170,9 @@ func RequireAppAccess(next http.Handler) http.Handler {
 			allowed = roleAllowed(claims.Role, "owner", "manager")
 		case path == "/expenses" || strings.HasPrefix(path, "/expenses/"):
 			allowed = roleAllowed(claims.Role, "owner", "accountant")
+		case path == "/restaurant/timezone":
+			// Managers may set the store time zone, but not the other store settings.
+			allowed = roleAllowed(claims.Role, "owner", "admin", "manager")
 		case path == "/settings":
 			allowed = roleAllowed(claims.Role, "owner", "admin")
 		case path == "/restaurant" || path == "/branches":

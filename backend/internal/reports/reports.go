@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"restoflow/internal/middleware"
 	"restoflow/internal/models"
+	"restoflow/internal/platform"
 )
 
 type ReportService struct {
@@ -25,6 +26,14 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 		restID := middleware.GetRestaurantID(req.Context())
 		branchID := req.URL.Query().Get("branch_id")
 
+		// "Today", "this month" and the 7-day trend use the store's time zone (Settings).
+		loc := platform.StoreLocation(req.Context(), s.pool, restID)
+		now := time.Now()
+		todayStart := platform.StartOfDay(now, loc)
+		monthStart := platform.StartOfMonth(now, loc)
+		weekStart := todayStart.AddDate(0, 0, -6)
+		monthStartDate := monthStart.Format("2006-01-02")
+
 		// 1. Today sales and orders
 		var todaySalesMinor int64 = 0
 		var todayOrders int64 = 0
@@ -32,8 +41,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(total_minor), 0), COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= CURRENT_DATE
-		`, restID, branchID).Scan(&todaySalesMinor, &todayOrders)
+			  AND status = 'paid' AND opened_at >= $3
+		`, restID, branchID, todayStart).Scan(&todaySalesMinor, &todayOrders)
 
 		var todayAvgBillMinor int64 = 0
 		if todayOrders > 0 {
@@ -47,8 +56,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(total_minor), 0), COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= date_trunc('month', CURRENT_DATE)
-		`, restID, branchID).Scan(&monthSalesMinor, &monthOrders)
+			  AND status = 'paid' AND opened_at >= $3
+		`, restID, branchID, monthStart).Scan(&monthSalesMinor, &monthOrders)
 
 		// 3. Month Net Profit (Revenue net - COGS - Expenses)
 		var monthVATMinor int64 = 0
@@ -57,16 +66,16 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(tax_minor), 0)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= date_trunc('month', CURRENT_DATE)
-		`, restID, branchID).Scan(&monthVATMinor)
+			  AND status = 'paid' AND opened_at >= $3
+		`, restID, branchID, monthStart).Scan(&monthVATMinor)
 
 		_ = s.pool.QueryRow(req.Context(), `
 			SELECT COALESCE(SUM(r.amount_minor), 0)
 			FROM refunds r
 			JOIN orders o ON r.order_id = o.id
 			WHERE r.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
-			  AND r.created_at >= date_trunc('month', CURRENT_DATE)
-		`, restID, branchID).Scan(&monthRefundsMinor)
+			  AND r.created_at >= $3
+		`, restID, branchID, monthStart).Scan(&monthRefundsMinor)
 
 		monthRevenueNet := monthSalesMinor - monthVATMinor - monthRefundsMinor
 
@@ -77,9 +86,9 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			FROM order_items oi
 			JOIN orders o ON oi.order_id = o.id
 			WHERE o.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
-			  AND o.status = 'paid' AND o.opened_at >= date_trunc('month', CURRENT_DATE)
+			  AND o.status = 'paid' AND o.opened_at >= $3
 			  AND oi.status != 'cancelled'
-		`, restID, branchID).Scan(&monthCOGSMinor)
+		`, restID, branchID, monthStart).Scan(&monthCOGSMinor)
 
 		// Wastage value
 		var monthWastageMinor int64 = 0
@@ -87,8 +96,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(ABS(qty) * unit_cost_minor), 0)::bigint
 			FROM stock_movements
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND type = 'wastage' AND created_at >= date_trunc('month', CURRENT_DATE)
-		`, restID, branchID).Scan(&monthWastageMinor)
+			  AND type = 'wastage' AND created_at >= $3
+		`, restID, branchID, monthStart).Scan(&monthWastageMinor)
 		monthCOGSMinor += monthWastageMinor
 
 		// Expenses
@@ -97,8 +106,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			SELECT COALESCE(SUM(amount_minor), 0)
 			FROM expenses
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND date >= date_trunc('month', CURRENT_DATE)::date
-		`, restID, branchID).Scan(&monthExpensesMinor)
+			  AND date >= $3::date
+		`, restID, branchID, monthStartDate).Scan(&monthExpensesMinor)
 
 		monthGrossProfit := monthRevenueNet - monthCOGSMinor
 		monthNetProfit := monthGrossProfit - monthExpensesMinor
@@ -169,9 +178,9 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			FROM payments p
 			JOIN orders o ON p.order_id = o.id
 			WHERE p.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
-			  AND p.paid_at >= date_trunc('month', CURRENT_DATE)
+			  AND p.paid_at >= $3
 			GROUP BY p.method_code
-		`, restID, branchID)
+		`, restID, branchID, monthStart)
 
 		type payMix struct {
 			Method string `json:"method"`
@@ -190,13 +199,13 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 
 		// 7. Recent 7-day sales trend
 		trendRows, _ := s.pool.Query(req.Context(), `
-			SELECT to_char(opened_at, 'YYYY-MM-DD') as day, SUM(total_minor)::bigint, COUNT(*)
+			SELECT to_char(opened_at AT TIME ZONE $4::text, 'YYYY-MM-DD') as day, SUM(total_minor)::bigint, COUNT(*)
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
-			  AND status = 'paid' AND opened_at >= CURRENT_DATE - INTERVAL '6 days'
+			  AND status = 'paid' AND opened_at >= $3
 			GROUP BY day
 			ORDER BY day ASC
-		`, restID, branchID)
+		`, restID, branchID, weekStart, loc.String())
 
 		type trendDay struct {
 			Day    string `json:"day"`
@@ -249,12 +258,21 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 		startDate := req.URL.Query().Get("start_date")
 		endDate := req.URL.Query().Get("end_date")
 
+		// Dates are calendar days in the store's time zone (Settings).
+		loc := platform.StoreLocation(req.Context(), s.pool, restID)
 		if startDate == "" {
-			startDate = time.Now().AddDate(0, 0, -30).Format("2006-01-02")
+			startDate = time.Now().In(loc).AddDate(0, 0, -30).Format("2006-01-02")
 		}
 		if endDate == "" {
-			endDate = time.Now().Format("2006-01-02")
+			endDate = time.Now().In(loc).Format("2006-01-02")
 		}
+		startAt, errStart := time.ParseInLocation("2006-01-02", startDate, loc)
+		endDay, errEnd := time.ParseInLocation("2006-01-02", endDate, loc)
+		if errStart != nil || errEnd != nil {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_DATE", "Dates must be YYYY-MM-DD", nil)
+			return
+		}
+		endAt := endDay.AddDate(0, 0, 1) // up to local midnight after the end day
 
 		var grossSalesMinor int64 = 0
 		var vatMinor int64 = 0
@@ -264,8 +282,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			FROM orders
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
 			  AND status = 'paid'
-			  AND opened_at >= $3::date AND opened_at < ($4::date + INTERVAL '1 day')
-		`, restID, branchID, startDate, endDate).Scan(&grossSalesMinor, &vatMinor, &ordersCount)
+			  AND opened_at >= $3 AND opened_at < $4
+		`, restID, branchID, startAt, endAt).Scan(&grossSalesMinor, &vatMinor, &ordersCount)
 
 		var refundsMinor int64 = 0
 		_ = s.pool.QueryRow(req.Context(), `
@@ -273,8 +291,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			FROM refunds r
 			JOIN orders o ON r.order_id = o.id
 			WHERE r.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
-			  AND r.created_at >= $3::date AND r.created_at < ($4::date + INTERVAL '1 day')
-		`, restID, branchID, startDate, endDate).Scan(&refundsMinor)
+			  AND r.created_at >= $3 AND r.created_at < $4
+		`, restID, branchID, startAt, endAt).Scan(&refundsMinor)
 
 		revenueNet := grossSalesMinor - vatMinor - refundsMinor
 
@@ -285,9 +303,9 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			JOIN orders o ON oi.order_id = o.id
 			WHERE o.restaurant_id = $1 AND ($2 = '' OR o.branch_id = $2::uuid)
 			  AND o.status = 'paid'
-			  AND o.opened_at >= $3::date AND o.opened_at < ($4::date + INTERVAL '1 day')
+			  AND o.opened_at >= $3 AND o.opened_at < $4
 			  AND oi.status != 'cancelled'
-		`, restID, branchID, startDate, endDate).Scan(&cogsMinor)
+		`, restID, branchID, startAt, endAt).Scan(&cogsMinor)
 
 		var wastageMinor int64 = 0
 		_ = s.pool.QueryRow(req.Context(), `
@@ -295,8 +313,8 @@ func (s *ReportService) MountRoutes(r chi.Router) {
 			FROM stock_movements
 			WHERE restaurant_id = $1 AND ($2 = '' OR branch_id = $2::uuid)
 			  AND type = 'wastage'
-			  AND created_at >= $3::date AND created_at < ($4::date + INTERVAL '1 day')
-		`, restID, branchID, startDate, endDate).Scan(&wastageMinor)
+			  AND created_at >= $3 AND created_at < $4
+		`, restID, branchID, startAt, endAt).Scan(&wastageMinor)
 		cogsMinor += wastageMinor
 
 		grossProfit := revenueNet - cogsMinor

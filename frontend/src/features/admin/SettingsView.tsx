@@ -1,15 +1,135 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { ApiError } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
 import { api } from '../../lib/api';
 import { Save, Store, Receipt, Percent, ShieldCheck, CheckCircle2 } from 'lucide-react';
 
+const FALLBACK_ZONES = ['Asia/Dhaka', 'Asia/Kolkata', 'Asia/Karachi', 'Asia/Kathmandu', 'Asia/Dubai', 'Asia/Riyadh', 'Asia/Singapore',
+  'Asia/Kuala_Lumpur', 'Asia/Bangkok', 'Asia/Tokyo', 'Europe/London', 'Europe/Berlin', 'America/New_York',
+  'America/Chicago', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
+
+// Time zone picker with a live preview of the store's clock in the selected zone.
+const TimeZoneField: React.FC<{ value: string; onChange: (tz: string) => void }> = ({ value, onChange }) => {
+  const [clock, setClock] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Every time zone the browser knows (IANA names, e.g. Asia/Dhaka), with a short fallback list.
+  const options = useMemo(() => {
+    let zones: string[] = [];
+    try {
+      zones = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.('timeZone') ?? [];
+    } catch {
+      zones = [];
+    }
+    if (!zones.length) zones = FALLBACK_ZONES;
+    return zones.includes(value) ? zones : [value, ...zones];
+  }, [value]);
+
+  let now = '';
+  try {
+    now = clock.toLocaleString([], { timeZone: value, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  } catch {
+    now = '';
+  }
+
+  return (
+    <>
+      <label htmlFor="store-timezone" className="text-xs font-bold text-[#0F172A] mb-1 block">Time Zone</label>
+      <select
+        id="store-timezone"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl px-3.5 py-2.5 text-xs text-[#0F172A] focus:outline-none focus:ring-2 focus:ring-[#0D5C3A]"
+      >
+        {options.map((zone) => (
+          <option key={zone} value={zone}>
+            {zone.replace(/_/g, ' ')}
+          </option>
+        ))}
+      </select>
+      <p className="text-[11px] text-[#64748B] mt-1">
+        Store time now: <span className="font-bold text-[#0F172A]">{now}</span>. Invoice numbers, the daily counters, and
+        &quot;today&quot; / &quot;this month&quot; in reports follow this time zone.
+      </p>
+    </>
+  );
+};
+
+// Managers may change only the store's time zone.
+const ManagerTimeZoneSettings: React.FC = () => {
+  const [timezone, setTimezone] = useState('Asia/Dhaka');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    api
+      .get('/restaurant')
+      .then((rest) => {
+        if (rest?.timezone) setTimezone(rest.timezone);
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaving(true);
+    setMessage(null);
+    try {
+      await api.patch('/restaurant/timezone', { timezone });
+      setMessage({ ok: true, text: 'Time zone saved.' });
+    } catch (err) {
+      setMessage({ ok: false, text: err instanceof ApiError ? err.message : 'Could not save the time zone' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <form onSubmit={save} className="space-y-4 max-w-2xl mx-auto">
+      <div>
+        <h1 className="text-xl sm:text-2xl font-black text-[#0F172A]">Store Time Zone</h1>
+        <p className="text-xs text-[#64748B] mt-0.5">The time the store runs on. Other store settings are managed by the owner.</p>
+      </div>
+      <div className="bg-white border border-[#E2E8F0] rounded-2xl p-5 shadow-sm space-y-4">
+        <div>
+          <TimeZoneField value={timezone} onChange={setTimezone} />
+        </div>
+        {message && (
+          <p role="status" className={`text-xs font-bold ${message.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+            {message.text}
+          </p>
+        )}
+        <button
+          type="submit"
+          disabled={saving}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#0D5C3A] hover:bg-[#0A472D] text-white text-xs font-black shadow-sm disabled:opacity-50"
+        >
+          <Save className="w-4 h-4" />
+          <span>{saving ? 'Saving...' : 'Save Time Zone'}</span>
+        </button>
+      </div>
+    </form>
+  );
+};
+
 export const SettingsView: React.FC = () => {
+  const { user } = useAuth();
+  if (user?.role === 'manager') return <ManagerTimeZoneSettings />;
+  return <StoreSettings />;
+};
+
+const StoreSettings: React.FC = () => {
   const { restaurant } = useAuth();
   const [name, setName] = useState<string>('NovaMart');
   const [phone, setPhone] = useState<string>('+880 1711-000000');
   const [address, setAddress] = useState<string>('Plot 12, Road 11, Block D, Banani, Dhaka-1213');
   const [taxNo, setTaxNo] = useState<string>('BIN-001928374-0101');
   const [currency, setCurrency] = useState<string>('BDT');
+  // Store time zone: invoice days, "today" on the dashboard and report periods follow it.
+  const [timezone, setTimezone] = useState<string>('Asia/Dhaka');
 
   // Tax settings
   const [vatPct, setVatPct] = useState<number>(5); // 5% retail super shop VAT
@@ -33,6 +153,7 @@ export const SettingsView: React.FC = () => {
           setAddress(rest.address || 'Plot 12, Road 11, Block D, Banani, Dhaka-1213');
           setTaxNo(rest.tax_no || 'BIN-001928374-0101');
           setCurrency(rest.currency || 'BDT');
+          setTimezone(rest.timezone || 'Asia/Dhaka');
         }
 
         const settings = await api.get('/settings');
@@ -65,6 +186,7 @@ export const SettingsView: React.FC = () => {
         address,
         tax_no: taxNo,
         currency,
+        timezone,
       });
 
       await api.patch('/settings', {
@@ -171,6 +293,10 @@ export const SettingsView: React.FC = () => {
               value={currency}
               className="w-full bg-[#F1F5F9] border border-[#E2E8F0] rounded-xl px-3.5 py-2.5 text-xs font-bold text-[#64748B] cursor-not-allowed"
             />
+          </div>
+
+          <div className="sm:col-span-2">
+            <TimeZoneField value={timezone} onChange={setTimezone} />
           </div>
 
           <div className="sm:col-span-2">

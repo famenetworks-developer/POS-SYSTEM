@@ -33,7 +33,7 @@ export const AdminLayout: React.FC = () => {
     { to: '/admin/reports', label: 'Financial Reports', icon: LineChart, area: 'reports' },
     { to: '/admin/staff', label: 'Staff & Roles', icon: UserCheck, area: 'staff' },
     { to: '/admin/shifts', label: user?.role === 'cashier' ? 'My Shift' : 'Register Shifts', icon: Clock, area: 'shifts' },
-    { to: '/admin/settings', label: 'Store Settings', icon: Settings, area: 'settings' },
+    { to: '/admin/settings', label: user?.role === 'manager' ? 'Store Time Zone' : 'Store Settings', icon: Settings, area: 'settings' },
   ];
   const tabs = allTabs.filter((tab) => canAccess(user?.role, tab.area));
 

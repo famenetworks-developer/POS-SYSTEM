@@ -70,7 +70,10 @@ type PayRequest struct {
 	CashReceived int64 `json:"cash_received,omitempty"`
 }
 
-func (s *OrderService) getNextCounter(ctx context.Context, tx pgx.Tx, branchID, counterName string) (int64, error) {
+// getNextCounter returns the next value of a branch counter. order_no never resets; daily
+// counters (token_no, invoice_no) are kept per store-local day, given as "YYYY-MM-DD".
+// The counter row is locked until the transaction ends, so concurrent sales take turns.
+func (s *OrderService) getNextCounter(ctx context.Context, tx pgx.Tx, branchID, counterName, day string) (int64, error) {
 	var val int64
 	if counterName == "order_no" {
 		query := `
@@ -85,12 +88,12 @@ func (s *OrderService) getNextCounter(ctx context.Context, tx pgx.Tx, branchID, 
 	}
 	query := `
 		INSERT INTO counters (branch_id, name, date, value)
-		VALUES ($1, $2, CURRENT_DATE, 1)
+		VALUES ($1, $2, $3::date, 1)
 		ON CONFLICT (branch_id, name, date)
 		DO UPDATE SET value = counters.value + 1
 		RETURNING value
 	`
-	err := tx.QueryRow(ctx, query, branchID, counterName).Scan(&val)
+	err := tx.QueryRow(ctx, query, branchID, counterName, day).Scan(&val)
 	return val, err
 }
 
@@ -263,14 +266,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string,
 		orderID = uuid.New().String()
 	}
 
-	orderNo, err := s.getNextCounter(ctx, tx, req.BranchID, "order_no")
+	storeToday := time.Now().In(platform.StoreLocation(ctx, tx, restID)).Format("2006-01-02")
+	orderNo, err := s.getNextCounter(ctx, tx, req.BranchID, "order_no", storeToday)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate order_no: %w", err)
 	}
 
 	var tokenNo *int64
 	if req.Type == "takeaway" || req.Type == "delivery" {
-		tNo, err := s.getNextCounter(ctx, tx, req.BranchID, "token_no")
+		tNo, err := s.getNextCounter(ctx, tx, req.BranchID, "token_no", storeToday)
 		if err == nil {
 			tokenNo = &tNo
 		}
@@ -683,12 +687,29 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 		invoicePrefix = "INV-"
 	}
 
-	// Gap-free invoice number generated using counters table with SELECT ... FOR UPDATE
-	invoiceSeq, err := s.getNextCounter(ctx, tx, branchID, "invoice_no")
-	if err != nil {
-		return nil, fmt.Errorf("failed to allocate invoice counter: %w", err)
+	// Invoice number: <prefix><store-local date>-<daily sequence>. The day comes from the
+	// store's time zone, and the same day is used for the counter and the printed number.
+	// If a number is already taken (e.g. after the time zone was changed), the next free
+	// one is used, so an invoice number is never duplicated.
+	storeNow := time.Now().In(platform.StoreLocation(ctx, tx, restID))
+	var invoiceNo string
+	for attempt := 0; ; attempt++ {
+		invoiceSeq, err := s.getNextCounter(ctx, tx, branchID, "invoice_no", storeNow.Format("2006-01-02"))
+		if err != nil {
+			return nil, fmt.Errorf("failed to allocate invoice counter: %w", err)
+		}
+		invoiceNo = fmt.Sprintf("%s%s-%04d", invoicePrefix, storeNow.Format("20060102"), invoiceSeq)
+		var taken bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM invoices WHERE branch_id = $1 AND invoice_no = $2)", branchID, invoiceNo).Scan(&taken); err != nil {
+			return nil, fmt.Errorf("failed to check invoice number: %w", err)
+		}
+		if !taken {
+			break
+		}
+		if attempt > 10000 {
+			return nil, fmt.Errorf("could not find a free invoice number")
+		}
 	}
-	invoiceNo := fmt.Sprintf("%s%s-%04d", invoicePrefix, time.Now().Format("20060102"), invoiceSeq)
 
 	// Record payments
 	var totalPaidNow int64 = 0

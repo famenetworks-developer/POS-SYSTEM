@@ -1,8 +1,10 @@
 package settings
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -38,11 +40,42 @@ func (s *SettingsService) MountRoutes(r chi.Router) {
 		middleware.JSONSuccess(w, http.StatusOK, rest, nil)
 	})
 
+	// Time zone only. Unlike the rest of the store settings, managers may change it too
+	// (allowed roles are set in middleware.RequireAppAccess).
+	r.Patch("/restaurant/timezone", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		var body struct {
+			Timezone string `json:"timezone"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.Timezone == "" {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", "A time zone is required", nil)
+			return
+		}
+		if !s.validTimezone(req.Context(), body.Timezone) {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_TIMEZONE", "Unknown time zone: "+body.Timezone, nil)
+			return
+		}
+		if _, err := s.pool.Exec(req.Context(), "UPDATE restaurants SET timezone = $1, updated_at = NOW() WHERE id = $2", body.Timezone, restID); err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "UPDATE_FAILED", "Could not save the time zone", nil)
+			return
+		}
+		s.audit.Log(req.Context(), "UPDATE_TIMEZONE", "restaurant", &restID, nil, map[string]string{"timezone": body.Timezone}, "", "")
+		middleware.JSONSuccess(w, http.StatusOK, map[string]string{"timezone": body.Timezone}, nil)
+	})
+
 	r.Patch("/restaurant", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
 		var body map[string]interface{}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", err.Error(), nil)
+			return
+		}
+
+		// The time zone must be a real IANA zone (e.g. Asia/Dhaka) known to both the app and the
+		// database: invoice days, "today" and report periods are all worked out in it. Checked
+		// before anything is saved, so a bad value changes nothing.
+		if tz, ok := body["timezone"].(string); ok && tz != "" && !s.validTimezone(req.Context(), tz) {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_TIMEZONE", "Unknown time zone: "+tz, nil)
 			return
 		}
 
@@ -222,4 +255,15 @@ func (s *SettingsService) MountRoutes(r chi.Router) {
 		}
 		middleware.JSONSuccess(w, http.StatusOK, stations, nil)
 	})
+}
+
+// validTimezone reports whether tz is a real IANA time zone (e.g. Asia/Dhaka) known to both
+// the app and the database: invoice days, "today" and report periods are all worked out in it.
+func (s *SettingsService) validTimezone(ctx context.Context, tz string) bool {
+	if _, err := time.LoadLocation(tz); err != nil {
+		return false
+	}
+	var dbKnows bool
+	_ = s.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_timezone_names WHERE name = $1)", tz).Scan(&dbKnows)
+	return dbKnows
 }

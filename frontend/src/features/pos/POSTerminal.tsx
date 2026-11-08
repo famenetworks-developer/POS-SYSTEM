@@ -9,7 +9,6 @@ import { wsHub } from '../../lib/ws';
 import { getProductFallback, getProductImage } from '../../lib/productImages';
 import { ReceiptModal } from '../../components/ui/ReceiptModal';
 import { ShiftBar } from './ShiftBar';
-import { BasketScanResult, CameraBasketScanner } from './CameraBasketScanner';
 import { CartLine, useSharedBasket } from './useSharedBasket';
 import {
   Search,
@@ -31,7 +30,6 @@ import {
   RotateCcw,
   Scale,
   Barcode,
-  ScanBarcode,
   UserPlus,
   Tag,
   AlertTriangle,
@@ -62,6 +60,11 @@ interface LoyaltyRule {
   auto_redeem: boolean;
 }
 
+// Lower-case, and treat hyphens, underscores, slashes, dots and repeated spaces as one space,
+// so "Ice-Cream" and "ice  cream" compare equal.
+const normalizeSearch = (text: string) =>
+  text.toLowerCase().replace(/[-_/.,()]+/g, ' ').replace(/\s+/g, ' ').trim();
+
 export const POSTerminal: React.FC = () => {
   const { user, restaurant, activeBranch } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -76,11 +79,11 @@ export const POSTerminal: React.FC = () => {
 
   // Navigation & Search State
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
   const [quickFilter, setQuickFilter] = useState<'all' | 'deals' | 'popular' | 'new'>('all');
   const [showAllProducts, setShowAllProducts] = useState<boolean>(false);
   const [scanFlash, setScanFlash] = useState<boolean>(false);
-  const [showCameraScanner, setShowCameraScanner] = useState(false);
-  // Short confirmation shown after the camera adds an item and closes.
+  // Short confirmation shown after a scanned item is added (or not found).
   const [scanToast, setScanToast] = useState<{ ok: boolean; text: string } | null>(null);
   const scanToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -222,8 +225,8 @@ export const POSTerminal: React.FC = () => {
     scanToastTimerRef.current = setTimeout(() => setScanToast(null), 2500);
   };
 
-  // Looks up a scanned code and adds the product to the basket once (camera or USB scanner).
-  const handleScannedCode = async (code: string): Promise<BasketScanResult> => {
+  // Looks up a scanned code (USB scanner) and adds the product to the basket once.
+  const handleScannedCode = async (code: string): Promise<{ ok: boolean; message: string }> => {
     if (code.length > 64 || /\s/.test(code)) {
       return { ok: false, message: 'That is not a product barcode' };
     }
@@ -236,6 +239,29 @@ export const POSTerminal: React.FC = () => {
       showScanToast(true, `Added ${product.name_en} · ${formatMoney(product.base_price_minor, restaurant?.currency)}`);
     }
     return { ok: true, message: '' };
+  };
+
+  // Enter in the search box: a barcode/SKU (typed or from a USB scanner) or a single matching
+  // product goes straight into the basket.
+  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setSearchQuery('');
+      return;
+    }
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    const text = searchQuery.trim();
+    if (!text) return;
+    const byCode = await findProductByCode(text);
+    const single = filteredProducts.length === 1 ? filteredProducts[0] : null;
+    const product = byCode || single;
+    if (!product) return;
+    addProductToCart(product);
+    if (!product.is_weighted) {
+      triggerScanFeedback();
+      showScanToast(true, `Added ${product.name_en} · ${formatMoney(product.base_price_minor, restaurant?.currency)}`);
+    }
+    setSearchQuery('');
   };
 
   // USB barcode scanners act like a keyboard: they type the code very fast and press Enter.
@@ -574,19 +600,40 @@ export const POSTerminal: React.FC = () => {
   };
 
   // Filter Products
-  const filteredProducts = products.filter((p) => {
-    // Quick filter tab
-    if (quickFilter === 'deals' && !p.is_hot_deal) return false;
-    if (quickFilter === 'popular' && !p.is_popular) return false;
-    if (quickFilter === 'new' && !p.is_new_arrival) return false;
+  // Search: every typed word must appear somewhere in the product's name (English or Bangla),
+  // brand, category, department, SKU or barcode. Case, hyphens and extra spaces don't matter,
+  // so "ice-cream", "cream ice" and "ICE  CREAM" all find "Ice Cream". Searching looks across
+  // all categories.
+  const searchWords = normalizeSearch(searchQuery).split(' ').filter(Boolean);
+  const matchesSearch = (p: Product) => {
+    const haystack = normalizeSearch(
+      [p.name_en, p.name_bn, p.brand, p.category_name, p.department, p.sku, p.barcode, ...(p.barcodes || [])].filter(Boolean).join(' ')
+    );
+    return searchWords.every((word) => haystack.includes(word));
+  };
 
-    // Category
-    if (selectedCategory !== 'all' && p.category_id !== selectedCategory) {
-      return false;
-    }
+  // Products whose own name or brand has every word are listed before those that match only by
+  // category or code (e.g. "rice" lists the rice before chickpeas from "Rice, Flours & Grains").
+  const nameMatches = (p: Product) => {
+    const name = normalizeSearch([p.name_en, p.name_bn, p.brand].filter(Boolean).join(' '));
+    return searchWords.every((word) => name.includes(word));
+  };
 
-    return true;
-  });
+  const filteredProducts = searchWords.length
+    ? products.filter(matchesSearch).sort((a, b) => Number(nameMatches(b)) - Number(nameMatches(a)))
+    : products.filter((p) => {
+        // Quick filter tab
+        if (quickFilter === 'deals' && !p.is_hot_deal) return false;
+        if (quickFilter === 'popular' && !p.is_popular) return false;
+        if (quickFilter === 'new' && !p.is_new_arrival) return false;
+
+        // Category
+        if (selectedCategory !== 'all' && p.category_id !== selectedCategory) {
+          return false;
+        }
+
+        return true;
+      });
 
   return (
     <div className={`pos-shell flex-1 flex flex-col lg:flex-row h-[calc(100dvh-7.25rem)] overflow-hidden gap-0 ${scanFlash ? 'scan-flash' : ''}`}>
@@ -715,17 +762,34 @@ export const POSTerminal: React.FC = () => {
         <div className="storefront-hero shrink-0 overflow-hidden" role="img" aria-label="Customers shopping for fresh groceries in a modern NovaMart supermarket">
         </div>
 
-        {/* Camera scanning (USB scanners are handled in the background) */}
+        {/* Product search. USB scanners work in the box too, or anywhere on the page (handled in the
+            background); phone scanning is on the Scan barcode page. */}
         <div className="catalogue-search px-3 py-3 flex flex-col sm:flex-row gap-2.5">
-          <button
-            type="button"
-            onClick={() => setShowCameraScanner(true)}
-            title="Scan an item into the basket with this device's camera"
-            className="inline-flex w-full items-center justify-center gap-2 min-h-[48px] rounded-full bg-[#E21B70] px-5 text-sm font-bold text-white shadow-[0_2px_12px_rgba(0,0,0,.12)] hover:bg-[#C91661]"
-          >
-            <ScanBarcode className="w-[18px] h-[18px]" /> Scan with camera
-          </button>
-
+          <div className="relative flex-1">
+            <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center text-[#6B7175] pointer-events-none z-10">
+              <Search className="w-[18px] h-[18px]" strokeWidth={1.8} />
+            </div>
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              placeholder="Search products (e.g. water, rice)"
+              aria-label="Search products by name, brand, category, SKU or barcode"
+              autoComplete="off"
+              className="w-full bg-white border border-[#D5D8DC] rounded-full pl-11 pr-10 py-3 text-sm font-normal text-[#2E3138] placeholder-[#6B7175] focus:bg-white focus:border-[#2E3138] focus:outline-none focus:ring-0 transition-colors [&::-webkit-search-cancel-button]:hidden"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search"
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-[#6B7175] hover:bg-[#F1F5F9]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
           {/* Quick Filter Buttons */}
           <div className="hidden">
             <button
@@ -1640,13 +1704,6 @@ export const POSTerminal: React.FC = () => {
       )}
 
       {/* Receipt Modal (Upon Successful Sale) */}
-      {showCameraScanner && (
-        <CameraBasketScanner
-          onCode={handleScannedCode}
-          onClose={() => setShowCameraScanner(false)}
-        />
-      )}
-
       {scanToast && (
         <div
           role="status"

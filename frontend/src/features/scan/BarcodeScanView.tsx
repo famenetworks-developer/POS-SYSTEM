@@ -52,8 +52,8 @@ const isProductCode = (code: string) => code.length <= MAX_PRODUCT_CODE_LENGTH &
 
 export const BarcodeScanView: React.FC = () => {
   const { user, restaurant, activeBranch } = useAuth();
-  // Roles that sell at the till get each scanned product added to their basket.
-  const canSell = user?.role === 'cashier' || user?.role === 'owner' || user?.role === 'manager';
+  // Cashiers get each scanned product added to their basket.
+  const canSell = user?.role === 'cashier';
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraRef = useRef<BarcodeCamera | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);

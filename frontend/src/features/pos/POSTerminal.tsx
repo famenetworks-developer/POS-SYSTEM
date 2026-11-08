@@ -1344,7 +1344,6 @@ export const POSTerminal: React.FC = () => {
                   { code: 'bkash', label: 'bKash' },
                   { code: 'nagad', label: 'Nagad' },
                   { code: 'rocket', label: 'Rocket' },
-                  { code: 'due', label: 'Due / Credit' },
                 ].map((pm) => (
                   <button
                     key={pm.code}

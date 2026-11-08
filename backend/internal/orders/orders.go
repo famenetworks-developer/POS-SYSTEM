@@ -99,6 +99,10 @@ type PaymentError struct{ Message string }
 
 func (e *PaymentError) Error() string { return e.Message }
 
+// creditMethods are "pay later" methods. The store never sells on credit, so they are
+// refused even if such a method is switched back on in the database.
+var creditMethods = map[string]bool{"due": true, "credit": true, "store_credit": true}
+
 // validatePayments checks that the customer pays the full amount due, no more and no less,
 // with the store's active payment methods, and that cash handed over covers the cash part.
 func validatePayments(ctx context.Context, tx pgx.Tx, restID string, req PayRequest, dueMinor int64) error {
@@ -129,6 +133,10 @@ func validatePayments(ctx context.Context, tx pgx.Tx, restID string, req PayRequ
 	for _, p := range req.Payments {
 		if p.AmountMinor <= 0 {
 			return &PaymentError{"Each payment amount must be more than ৳0"}
+		}
+		// No selling on credit: the customer always pays the full amount at the till.
+		if creditMethods[strings.ToLower(p.MethodCode)] {
+			return &PaymentError{"Credit sales are not allowed. The customer must pay the full amount."}
 		}
 		if !active[p.MethodCode] {
 			return &PaymentError{fmt.Sprintf("Payment method %q is not available", p.MethodCode)}

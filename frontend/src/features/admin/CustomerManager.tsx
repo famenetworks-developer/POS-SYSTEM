@@ -238,7 +238,6 @@ export const CustomerManager: React.FC = () => {
                 <th className="py-3 px-4">Membership Tier</th>
                 <th className="py-3 px-4">Loyalty Points</th>
                 <th className="py-3 px-4">Points Cash Value</th>
-                <th className="py-3 px-4">Customer Credit</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#F1F5F9] text-[#0F172A]">
@@ -296,9 +295,6 @@ export const CustomerManager: React.FC = () => {
                       ৳ {(pointsValueMinor / 100).toFixed(2)}
                     </td>
 
-                    <td className="py-3 px-4 font-semibold text-[#0F172A]">
-                      {c.balance_minor ? formatMoney(c.balance_minor, restaurant?.currency) : '৳ 0.00'}
-                    </td>
                   </tr>
                 );
               })}

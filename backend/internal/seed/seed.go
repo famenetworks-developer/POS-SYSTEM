@@ -164,7 +164,6 @@ func SeedDatabase(pool *pgxpool.Pool) error {
 		{"bkash", "bKash Merchant (বিকাশ)", true},
 		{"nagad", "Nagad Direct (নগদ)", true},
 		{"rocket", "Dutch Bangla Rocket", true},
-		{"due", "Customer Store Credit / Due", false},
 	}
 	for _, m := range methods {
 		_, _ = pool.Exec(ctx, `

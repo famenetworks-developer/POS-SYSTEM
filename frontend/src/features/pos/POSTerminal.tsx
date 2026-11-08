@@ -1390,13 +1390,28 @@ export const POSTerminal: React.FC = () => {
               </button>
             </div>
 
-            {/* Total Display */}
-            <div className="bg-[#E6F4EA] border border-[#B7E1CD] rounded-xl p-3 text-center">
-              <span className="text-xs font-bold text-[#64748B] uppercase">Net Payable</span>
-              <p className="text-2xl sm:text-3xl font-black text-[#0D5C3A]">
-                {formatMoney(grandTotalMinor, restaurant?.currency)}
-              </p>
-            </div>
+            {/* Total Display. With cash selected, tapping it fills Cash Tendered with the exact amount. */}
+            {paymentMethod === 'cash' ? (
+              <button
+                type="button"
+                onClick={() => setCashTendered((grandTotalMinor / 100).toString())}
+                title="Tap to enter this amount as cash tendered"
+                className="w-full bg-[#E6F4EA] border border-[#B7E1CD] rounded-xl p-3 text-center cursor-pointer transition-colors hover:bg-[#D1EADB] hover:border-[#0D5C3A] active:scale-[0.99] focus:outline-none focus:ring-2 focus:ring-[#0D5C3A]"
+              >
+                <span className="text-xs font-bold text-[#64748B] uppercase">Net Payable</span>
+                <p className="text-2xl sm:text-3xl font-black text-[#0D5C3A]">
+                  {formatMoney(grandTotalMinor, restaurant?.currency)}
+                </p>
+                <span className="text-[10px] font-semibold text-[#0D5C3A]/70">Tap to fill cash tendered</span>
+              </button>
+            ) : (
+              <div className="bg-[#E6F4EA] border border-[#B7E1CD] rounded-xl p-3 text-center">
+                <span className="text-xs font-bold text-[#64748B] uppercase">Net Payable</span>
+                <p className="text-2xl sm:text-3xl font-black text-[#0D5C3A]">
+                  {formatMoney(grandTotalMinor, restaurant?.currency)}
+                </p>
+              </div>
+            )}
 
             {/* Payment Method Selector */}
             <div className="space-y-1.5">

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -38,6 +39,7 @@ type CreateOrderRequest struct {
 	Notes       string               `json:"notes,omitempty"`
 	ShiftID     *string              `json:"shift_id,omitempty"`
 	DeliveryFee int64                `json:"delivery_fee,omitempty"`
+	CouponCode  string               `json:"coupon_code,omitempty"` // checked and priced by the server
 	Items       []CreateOrderItemReq `json:"items"`
 }
 
@@ -90,6 +92,41 @@ func (s *OrderService) getNextCounter(ctx context.Context, tx pgx.Tx, branchID, 
 	`
 	err := tx.QueryRow(ctx, query, branchID, counterName).Scan(&val)
 	return val, err
+}
+
+// CouponError is a coupon problem the cashier can act on (expired, used up, minimum spend...).
+type CouponError struct{ Message string }
+
+func (e *CouponError) Error() string { return e.Message }
+
+type coupon struct {
+	id, code, typ        string
+	pct                  float64
+	fixedMinor, minSpend int64
+}
+
+// findCoupon returns the store's usable coupon with this code: active, within its dates,
+// and not used up. The row is locked so concurrent sales count uses correctly.
+func findCoupon(ctx context.Context, tx pgx.Tx, restID, code string) (*coupon, error) {
+	var c coupon
+	var usageLimit, usedCount int
+	err := tx.QueryRow(ctx, `
+		SELECT id::text, code, type, discount_pct::float8, discount_minor, min_spend_minor, usage_limit, used_count
+		FROM promotions
+		WHERE restaurant_id = $1 AND UPPER(code) = UPPER($2) AND is_active = TRUE
+		  AND NOW() BETWEEN start_date AND end_date
+		FOR UPDATE
+	`, restID, code).Scan(&c.id, &c.code, &c.typ, &c.pct, &c.fixedMinor, &c.minSpend, &usageLimit, &usedCount)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, &CouponError{"Coupon code is invalid or expired"}
+	}
+	if err != nil {
+		return nil, err
+	}
+	if usageLimit > 0 && usedCount >= usageLimit {
+		return nil, &CouponError{"This coupon has been used up"}
+	}
+	return &c, nil
 }
 
 // ErrNoOpenShift is returned when someone tries to sell or take a payment without an open shift.
@@ -262,10 +299,26 @@ func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string,
 		}
 	}
 
+	// Coupon: the server checks it and works out the discount from the real subtotal.
+	var promotionID, couponCode *string
+	var couponDiscount int64
+	if code := strings.TrimSpace(req.CouponCode); code != "" {
+		c, err := findCoupon(ctx, tx, restID, code)
+		if err != nil {
+			return nil, err
+		}
+		subtotal := billing.CalculateBill(billing.BillInput{Items: calcItems, RoundingUnit: 1}).SubtotalMinor
+		if subtotal < c.minSpend {
+			return nil, &CouponError{fmt.Sprintf("Coupon %s needs a minimum spend of ৳%.2f", c.code, float64(c.minSpend)/100)}
+		}
+		couponDiscount = billing.CouponDiscount(subtotal, c.typ, c.pct, c.fixedMinor)
+		promotionID, couponCode = &c.id, &c.code
+	}
+
 	bill := billing.CalculateBill(billing.BillInput{
 		Items:              calcItems,
 		DiscountPercent:    0,
-		DiscountFixed:      0,
+		DiscountFixed:      couponDiscount,
 		ServiceChargePct:   servicePct,
 		VatPct:             vatPct,
 		DeliveryFee:        req.DeliveryFee,
@@ -278,12 +331,15 @@ func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string,
 	updateTotalsQuery := `
 		UPDATE orders
 		SET subtotal_minor = $1, discount_minor = $2, service_charge_minor = $3, tax_minor = $4,
-		    round_off_minor = $5, total_minor = $6
+		    round_off_minor = $5, total_minor = $6, promotion_id = $8::uuid, coupon_code = $9
 		WHERE id = $7
 	`
-	_, _ = tx.Exec(ctx, updateTotalsQuery,
+	if _, err := tx.Exec(ctx, updateTotalsQuery,
 		bill.SubtotalMinor, bill.OrderDiscountMinor, bill.ServiceChargeMinor, bill.TaxMinor, bill.RoundOffMinor, bill.TotalMinor, orderID,
-	)
+		promotionID, couponCode,
+	); err != nil {
+		return nil, fmt.Errorf("failed to save order totals: %w", err)
+	}
 	order.SubtotalMinor = bill.SubtotalMinor
 	order.DiscountMinor = bill.OrderDiscountMinor
 	order.ServiceChargeMinor = bill.ServiceChargeMinor
@@ -445,13 +501,14 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	var paidMinor int64
 	var orderNo int64
 	var status string
+	var promotionID *string
 
 	err = tx.QueryRow(ctx, `
-		SELECT branch_id, table_id, shift_id, total_minor, paid_minor, order_no, status
+		SELECT branch_id, table_id, shift_id, total_minor, paid_minor, order_no, status, promotion_id::text
 		FROM orders
 		WHERE id = $1 AND restaurant_id = $2
 		FOR UPDATE
-	`, orderID, restID).Scan(&branchID, &tableID, &shiftID, &totalMinor, &paidMinor, &orderNo, &status)
+	`, orderID, restID).Scan(&branchID, &tableID, &shiftID, &totalMinor, &paidMinor, &orderNo, &status, &promotionID)
 	if err != nil {
 		return nil, fmt.Errorf("order not found: %w", err)
 	}
@@ -466,6 +523,20 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 		return nil, ErrNoOpenShift
 	}
 	shiftID = payerShift
+
+	// A coupon counts as used when the sale is paid, within its usage limit.
+	if promotionID != nil {
+		tag, err := tx.Exec(ctx, `
+			UPDATE promotions SET used_count = used_count + 1
+			WHERE id = $1 AND restaurant_id = $2 AND (usage_limit <= 0 OR used_count < usage_limit)
+		`, *promotionID, restID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to record coupon use: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return nil, &CouponError{"This coupon has been used up"}
+		}
+	}
 
 	var invoicePrefix string
 	_ = tx.QueryRow(ctx, "SELECT invoice_prefix FROM branches WHERE id = $1", branchID).Scan(&invoicePrefix)
@@ -763,6 +834,11 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 		order, err := s.CreateOrder(req.Context(), restID, claims.UserID, body)
 		if errors.Is(err, ErrNoOpenShift) {
 			middleware.JSONError(w, http.StatusConflict, "SHIFT_REQUIRED", "Open a shift before selling.", nil)
+			return
+		}
+		var couponErr *CouponError
+		if errors.As(err, &couponErr) {
+			middleware.JSONError(w, http.StatusBadRequest, "COUPON_INVALID", couponErr.Message, nil)
 			return
 		}
 		if err != nil {
@@ -1181,6 +1257,11 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 		res, err := s.Pay(req.Context(), restID, claims.UserID, orderID, body)
 		if errors.Is(err, ErrNoOpenShift) {
 			middleware.JSONError(w, http.StatusConflict, "SHIFT_REQUIRED", "Open a shift before taking payment.", nil)
+			return
+		}
+		var couponErr *CouponError
+		if errors.As(err, &couponErr) {
+			middleware.JSONError(w, http.StatusBadRequest, "COUPON_INVALID", couponErr.Message, nil)
 			return
 		}
 		if err != nil {

@@ -118,3 +118,25 @@ func TestAppendixATestVectors(t *testing.T) {
 		}
 	})
 }
+
+func TestCouponDiscount(t *testing.T) {
+	cases := []struct {
+		name     string
+		subtotal int64
+		typ      string
+		pct      float64
+		fixed    int64
+		want     int64
+	}{
+		{"percentage", 200000, "percentage", 10, 0, 20000},
+		{"percentage rounds half up", 12345, "percentage", 10, 0, 1235},
+		{"fixed", 200000, "fixed", 0, 20000, 20000},
+		{"fixed capped at subtotal", 15000, "fixed", 0, 20000, 15000},
+		{"unsupported type", 200000, "bogo", 50, 0, 0},
+	}
+	for _, c := range cases {
+		if got := CouponDiscount(c.subtotal, c.typ, c.pct, c.fixed); got != c.want {
+			t.Errorf("%s: got %d, want %d", c.name, got, c.want)
+		}
+	}
+}

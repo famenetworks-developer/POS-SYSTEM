@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"restoflow/internal/audit"
+	"restoflow/internal/billing"
 	"restoflow/internal/middleware"
 	"restoflow/internal/models"
 	"restoflow/internal/platform"
@@ -815,18 +816,22 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 			return
 		}
 
-		var discountMinor int64 = 0
-		if promo.Type == "percentage" {
-			discountMinor = int64(float64(body.SubtotalBDT) * (promo.DiscountPct / 100.0))
-		} else {
-			discountMinor = promo.DiscountMinor
+		if promo.UsageLimit > 0 && promo.UsedCount >= promo.UsageLimit {
+			middleware.JSONError(w, http.StatusBadRequest, "PROMO_USED_UP", "This coupon has been used up", nil)
+			return
 		}
 
+		// Same formula the server uses when the sale is created. The till recalculates
+		// percentage coupons itself when the basket changes, using type and discount_pct.
 		middleware.JSONSuccess(w, http.StatusOK, map[string]interface{}{
-			"valid":          true,
-			"code":           promo.Code,
-			"name":           promo.Name,
-			"discount_minor": discountMinor,
+			"valid":           true,
+			"code":            promo.Code,
+			"name":            promo.Name,
+			"type":            promo.Type,
+			"discount_pct":    promo.DiscountPct,
+			"fixed_minor":     promo.DiscountMinor,
+			"min_spend_minor": promo.MinSpendMinor,
+			"discount_minor":  billing.CouponDiscount(body.SubtotalBDT, promo.Type, promo.DiscountPct, promo.DiscountMinor),
 		}, nil)
 	})
 

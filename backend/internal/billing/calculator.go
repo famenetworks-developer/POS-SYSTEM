@@ -138,3 +138,23 @@ func WeightedAverageCost(oldQty float64, oldAvgCost int64, receivedQty float64, 
 	newCost := (oldQty*float64(oldAvgCost) + receivedQty*float64(unitCost)) / totalQty
 	return RoundHalfUp(newCost)
 }
+
+// CouponDiscount is the discount a coupon gives on a subtotal (all minor units).
+// Percentage coupons round half up; fixed coupons give their amount. The discount
+// never exceeds the subtotal. Other coupon types (e.g. "bogo") give nothing here.
+func CouponDiscount(subtotalMinor int64, couponType string, discountPct float64, fixedMinor int64) int64 {
+	var discount int64
+	switch couponType {
+	case "percentage":
+		discount = RoundHalfUp(float64(subtotalMinor) * discountPct / 100.0)
+	case "fixed":
+		discount = fixedMinor
+	}
+	if discount < 0 {
+		return 0
+	}
+	if discount > subtotalMinor {
+		return subtotalMinor
+	}
+	return discount
+}

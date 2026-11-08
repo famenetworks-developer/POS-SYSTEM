@@ -407,14 +407,15 @@ export const POSTerminal: React.FC = () => {
         subtotal_minor: cartSubtotalMinor,
       });
       if (res && res.valid) {
+        // Keep the coupon's rules so the discount follows the basket as it changes.
         setAppliedCoupon({
           id: res.code,
           code: res.code,
           name: res.name,
-          type: 'fixed',
-          discount_pct: 0,
-          discount_minor: res.discount_minor,
-          min_spend_minor: 0,
+          type: res.type === 'percentage' ? 'percentage' : 'fixed',
+          discount_pct: Number(res.discount_pct) || 0,
+          discount_minor: Number(res.fixed_minor) || 0,
+          min_spend_minor: Number(res.min_spend_minor) || 0,
           is_active: true,
         });
       }
@@ -429,7 +430,17 @@ export const POSTerminal: React.FC = () => {
     0
   );
 
-  const couponDiscountMinor = appliedCoupon ? appliedCoupon.discount_minor : 0;
+  // Same formula as the server (billing.CouponDiscount): percentage rounds half up, never above the subtotal.
+  // Below the coupon's minimum spend it gives nothing and is not sent with the sale.
+  const couponEligible = !!appliedCoupon && cartSubtotalMinor >= appliedCoupon.min_spend_minor;
+  const couponDiscountMinor = !appliedCoupon || !couponEligible
+    ? 0
+    : Math.min(
+        cartSubtotalMinor,
+        appliedCoupon.type === 'percentage'
+          ? Math.round((cartSubtotalMinor * appliedCoupon.discount_pct) / 100)
+          : appliedCoupon.discount_minor
+      );
   const taxableBase = Math.max(0, cartSubtotalMinor - couponDiscountMinor);
   // Super shop standard VAT: 5% in Bangladesh
   const vatMinor = Math.round(taxableBase * 0.05);
@@ -453,6 +464,7 @@ export const POSTerminal: React.FC = () => {
         table_id: selectedRegister?.id,
         customer_id: selectedCustomer?.id,
         delivery_fee: deliveryCostMinor,
+        coupon_code: couponEligible ? appliedCoupon?.code : undefined,
         notes: orderType === 'delivery' ? `Delivery to: ${deliveryAddress} (${deliveryPhone})` : '',
         items: cart.map((line) => ({
           item_id: line.product.id,
@@ -1135,9 +1147,21 @@ export const POSTerminal: React.FC = () => {
           </div>
           {couponError && <p className="text-[10px] text-red-600 font-bold">{couponError}</p>}
           {appliedCoupon && (
-            <div className="flex items-center justify-between text-[11px] font-bold text-[#0D5C3A] bg-[#E6F4EA] p-1.5 rounded-lg border border-[#B7E1CD]">
-              <span>Coupon: {appliedCoupon.code}</span>
-              <span>-{formatMoney(appliedCoupon.discount_minor, restaurant?.currency)}</span>
+            <div
+              className={`flex items-center justify-between gap-2 text-[11px] font-bold p-1.5 rounded-lg border ${
+                couponEligible ? 'text-[#0D5C3A] bg-[#E6F4EA] border-[#B7E1CD]' : 'text-amber-900 bg-amber-50 border-amber-200'
+              }`}
+            >
+              <span className="min-w-0 truncate">
+                Coupon: {appliedCoupon.code}
+                {!couponEligible && ` · needs ${formatMoney(appliedCoupon.min_spend_minor, restaurant?.currency)} minimum`}
+              </span>
+              <span className="flex shrink-0 items-center gap-1.5">
+                {couponEligible && <span>-{formatMoney(couponDiscountMinor, restaurant?.currency)}</span>}
+                <button type="button" onClick={() => setAppliedCoupon(null)} aria-label="Remove coupon" className="rounded p-0.5 hover:bg-white/70">
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
             </div>
           )}
 

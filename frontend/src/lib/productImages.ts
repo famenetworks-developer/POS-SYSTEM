@@ -1,66 +1,162 @@
 import type { Product } from '../types';
 
-const unsplash = (id: string) =>
-  `https://images.unsplash.com/${id}?auto=format&fit=crop&w=640&q=82`;
+import { PRODUCT_PHOTOS } from './productImageMap';
 
-const keywordImages: Array<[RegExp, string]> = [
-  [/apple/i, unsplash('photo-1560806887-1e4cd0b6cbd6')],
-  [/banana|kola/i, unsplash('photo-1571771894821-ce9b6c11b08e')],
-  [/orange|malta|lemon/i, unsplash('photo-1547514701-42782101795e')],
-  [/grape/i, unsplash('photo-1537640538966-79f369143f8f')],
-  [/papaya/i, unsplash('photo-1517282009859-f000ec3b26fe')],
-  [/tomato/i, unsplash('photo-1546094096-0df4bcaaa337')],
-  [/potato/i, unsplash('photo-1518977676601-b53f82aba655')],
-  [/onion|garlic|ginger/i, unsplash('photo-1618512496248-a07fe83aa8cb')],
-  [/egg/i, unsplash('photo-1506976785307-8732e854ad03')],
-  [/milk|dairy|yogurt/i, unsplash('photo-1550583724-b2692b85b150')],
-  [/bread|bakery|biscuit|cookie/i, unsplash('photo-1509440159596-0249088772ff')],
-  [/coffee|tea/i, unsplash('photo-1447933601403-0c6688de566e')],
-  [/chocolate|candy/i, unsplash('photo-1575377427642-087cf684f29d')],
-  [/ice cream|dessert/i, unsplash('photo-1563805042-7684c019e1cb')],
-  [/fish|hilsa|seafood/i, unsplash('photo-1544551763-46a013bb70d5')],
-  [/chicken|beef|mutton|meat/i, unsplash('photo-1607623814075-e51df1bdc82f')],
-  [/rice|grain|flour|atta|maida/i, unsplash('photo-1586201375761-83865001e31c')],
-  [/oil|ghee/i, unsplash('photo-1474979266404-7eaacbcd87c5')],
-  [/spice|seasoning|salt/i, unsplash('photo-1596040033229-a9821ebd058d')],
-  [/juice|beverage|drink|water/i, unsplash('photo-1544145945-f90425340c7e')],
-  [/snack|chips/i, unsplash('photo-1621939514649-280e2aa9454f')],
+// Photos are served from public/products/<key>.jpg (free Unsplash images, stored locally
+// so product cards load fast and also work without internet).
+const photo = (key: string) => `/products/${key}.jpg`;
+
+// For products not in the catalogue map (e.g. newly added ones): match words in the name.
+// More specific patterns come first.
+const keywordPhotos: Array<[RegExp, string]> = [
+  [/coca.?cola|coke/i, 'coke-cans'],
+  [/sprite|7up|soda|lemon.?lime/i, 'soda-can'],
+  [/\bcola\b/i, 'cola-glass'], // whole word: "chocolate" contains "cola"
+  [/red bull|energy drink/i, 'red-bull'],
+  [/water/i, 'water-bottle'],
+  [/mango|juice|frooto/i, 'mango-drink'],
+  [/green tea/i, 'green-tea'],
+  [/coffee|nescaf/i, 'coffee'],
+  [/\btea\b/i, 'tea'],
+  [/malt|horlicks/i, 'malt-drink'],
+  [/egg/i, 'eggs'],
+  [/milk powder/i, 'milk'],
+  [/paneer/i, 'paneer'],
+  [/ghee/i, 'ghee'],
+  [/butter(?! cookie| bite)/i, 'butter'],
+  [/cheese/i, 'cheese'],
+  [/curd|doi|yogurt|yoghurt/i, 'yogurt'],
+  [/milk(?! bread)/i, 'milk'],
+  [/bread|toast|bun/i, 'white-bread'],
+  [/corn ?flakes|cereal/i, 'cornflakes'],
+  [/oats/i, 'oats'],
+  [/jam|jelly/i, 'jam'],
+  [/peanut butter|nutella|spread/i, 'peanut-butter'],
+  [/ketchup|tomato sauce|chilli sauce|chili sauce|sauce/i, 'tomato-sauce'],
+  [/apple/i, 'apples'],
+  [/banana|kola/i, 'bananas'],
+  [/orange|malta/i, 'oranges'],
+  [/lemon|lebu/i, 'lemons'],
+  [/grape/i, 'grapes'],
+  [/papaya/i, 'papaya'],
+  [/guava|peyara/i, 'guava'],
+  [/pear/i, 'pears'],
+  [/tomato/i, 'tomatoes'],
+  [/potato|alu/i, 'potatoes'],
+  [/onion|peyaj/i, 'onions'],
+  [/garlic|roshun/i, 'garlic'],
+  [/ginger|\bada\b/i, 'ginger'],
+  [/cucumber|shosha/i, 'cucumbers'],
+  [/chili|chilli|morich/i, 'green-chilies'],
+  [/coriander leaf|dhone pata/i, 'coriander'],
+  [/turmeric|holud/i, 'turmeric'],
+  [/cardamom|elach/i, 'cardamom'],
+  [/biryani/i, 'biryani'],
+  [/masala|spice|cumin|jira|powder/i, 'spices'],
+  [/salt/i, 'salt'],
+  [/sugar/i, 'sugar'],
+  [/atta|maida|flour/i, 'flour'],
+  [/dal|lentil/i, 'lentils'],
+  [/chickpea|chola/i, 'chickpeas'],
+  [/rice/i, 'rice'],
+  [/olive oil/i, 'olive-oil'],
+  [/coconut oil/i, 'coconut-oil'],
+  [/oil/i, 'oil-jug'],
+  [/shrimp|prawn|chingri/i, 'shrimp'],
+  [/fish|hilsa|hilsha|rui|katla|pabda/i, 'whole-fish'],
+  [/drumstick|fried chicken/i, 'fried-chicken'],
+  [/nugget/i, 'nuggets'],
+  [/popcorn|tender/i, 'chicken-tenders'],
+  [/kebab|kabab/i, 'kebab'],
+  [/spring roll|samosa/i, 'spring-rolls'],
+  [/paratha|roti/i, 'paratha'],
+  [/breast|fillet/i, 'raw-chicken'],
+  [/chicken/i, 'whole-chicken'],
+  [/mutton|lamb/i, 'mutton'],
+  [/beef|meat/i, 'raw-beef'],
+  [/pasta|penne|spaghetti/i, 'pasta'],
+  [/spicy.*noodle|buldak/i, 'spicy-noodles'],
+  [/noodle/i, 'stir-fry-noodles'],
+  [/soup/i, 'soup'],
+  [/ice cream tub|vanilla/i, 'ice-cream-scoops'],
+  [/ice cream|chocobar|kulfi/i, 'ice-cream-bar'],
+  [/rosogolla|rasgulla|gulab jamun|mishti|sweets/i, 'gulab-jamun'],
+  [/dark chocolate/i, 'truffles'],
+  [/chocolate|cadbury|kitkat|snickers/i, 'chocolate-bars'],
+  [/candy|mint|gummy|lollipop/i, 'gummies'],
+  [/chips|crisps|kurkure/i, 'chips'],
+  [/cashew/i, 'cashews'],
+  [/chanachur|nuts|almond/i, 'almonds'],
+  [/oreo/i, 'chocolate-cookies'],
+  [/biscuit|cookie/i, 'cookies'],
+  [/toothpaste|paste/i, 'toothpaste'],
+  [/toothbrush/i, 'toothbrushes'],
+  [/mouthwash/i, 'mouthwash'],
+  [/razor|shav/i, 'razor'],
+  [/shampoo|body wash|conditioner/i, 'shampoo'],
+  [/soap/i, 'soap-bars'],
+  [/diaper|nappy/i, 'diapers'],
+  [/baby/i, 'baby-feet'],
+  [/cat litter|litter/i, 'kitten'],
+  [/cat/i, 'cat-food'],
+  [/dog/i, 'dog-biscuits'],
+  [/capsule/i, 'capsules'],
+  [/tablet|paracetamol|medicine/i, 'tablets'],
+  [/bandage|plaster|first aid/i, 'first-aid'],
+  [/detergent|washing powder|laundry/i, 'laundry'],
+  [/dishwash|dish wash/i, 'kitchen-sink'],
+  [/disinfectant|antiseptic/i, 'cleaning-spray'],
+  [/cleaner|mosquito|spray/i, 'cleaning-spray'],
+  [/facial tissue|tissue box/i, 'tissue-box'],
+  [/tissue|toilet|towel/i, 'toilet-rolls'],
+  [/batter(y|ies)/i, 'batteries'],
+  [/paper|a4/i, 'printer-paper'],
+  [/khata|notebook|exercise book/i, 'notebook'],
+  [/pen\b|pens\b|pencil|glue/i, 'pen'],
 ];
 
-const categoryImages: Array<[RegExp, string]> = [
-  [/fruit|produce/i, unsplash('photo-1610832958506-aa56368176cf')],
-  [/vegetable/i, unsplash('photo-1540420773420-3366772f4999')],
-  [/meat|poultry/i, unsplash('photo-1607623814075-e51df1bdc82f')],
-  [/fish|seafood/i, unsplash('photo-1544551763-46a013bb70d5')],
-  [/dairy|egg|chilled/i, unsplash('photo-1628088062854-d1870b4553da')],
-  [/bakery|breakfast/i, unsplash('photo-1509440159596-0249088772ff')],
-  [/beverage|cold drink/i, unsplash('photo-1544145945-f90425340c7e')],
-  [/tea|coffee/i, unsplash('photo-1495474472287-4d71bcdd2085')],
-  [/dessert|ice cream/i, unsplash('photo-1563805042-7684c019e1cb')],
-  [/chocolate|candy/i, unsplash('photo-1575377427642-087cf684f29d')],
-  [/snack|biscuit/i, unsplash('photo-1621939514649-280e2aa9454f')],
-  [/frozen|ready meal|noodle|pasta|soup/i, unsplash('photo-1563379926898-05f4575a45d8')],
-  [/rice|flour|grain|daily essential/i, unsplash('photo-1586201375761-83865001e31c')],
-  [/oil|ghee|spice|seasoning|sauce|pickle|spread/i, unsplash('photo-1596040033229-a9821ebd058d')],
-  [/cleaning|laundry/i, unsplash('photo-1583947215259-38e31be8751f')],
-  [/household/i, unsplash('photo-1527515637462-cff94eecc1ac')],
-  [/personal care|bath|oral|grooming|beauty/i, unsplash('photo-1556228578-8c89e6adf883')],
-  [/health|wellness/i, unsplash('photo-1505751172876-fa1923c5c528')],
-  [/baby|diaper/i, unsplash('photo-1515488042361-ee00e0ddd4e4')],
-  [/pet/i, unsplash('photo-1589924691995-400dc9ecc119')],
-  [/stationery|batter/i, unsplash('photo-1455390582262-044cdead277a')],
+// Last resort: the product's category or department.
+const categoryPhotos: Array<[RegExp, string]> = [
+  [/fruit/i, 'apples'],
+  [/vegetable/i, 'tomatoes'],
+  [/meat|poultry/i, 'raw-beef'],
+  [/fish|seafood/i, 'whole-fish'],
+  [/dairy|chilled|egg/i, 'milk'],
+  [/bakery|breakfast/i, 'white-bread'],
+  [/beverage|cold drink/i, 'drink-cans'],
+  [/tea|coffee/i, 'tea'],
+  [/ice cream|dessert/i, 'ice-cream-scoops'],
+  [/chocolate|candy/i, 'chocolate-bars'],
+  [/snack|biscuit/i, 'cookies'],
+  [/frozen|ready meal/i, 'nuggets'],
+  [/noodle|pasta|soup/i, 'pasta'],
+  [/rice|flour|grain/i, 'rice'],
+  [/daily essential/i, 'flour'],
+  [/oil|ghee/i, 'oil-jug'],
+  [/spice|seasoning/i, 'spices'],
+  [/sauce|pickle|spread/i, 'tomato-sauce'],
+  [/cleaning|laundry/i, 'laundry'],
+  [/household/i, 'toilet-rolls'],
+  [/oral|grooming/i, 'toothbrushes'],
+  [/personal care|bath|beauty/i, 'soap-bars'],
+  [/health|wellness/i, 'first-aid'],
+  [/baby|diaper/i, 'baby-feet'],
+  [/pet/i, 'cat-food'],
+  [/stationery|batter/i, 'notebook'],
 ];
 
 export const getProductImage = (product: Product): string => {
   if (product.image_url?.trim()) return product.image_url;
 
-  const productText = `${product.name_en} ${product.brand || ''}`;
-  const keywordMatch = keywordImages.find(([pattern]) => pattern.test(productText));
-  if (keywordMatch) return keywordMatch[1];
+  const exact = PRODUCT_PHOTOS[product.name_en];
+  if (exact) return photo(exact);
+
+  const keywordMatch = keywordPhotos.find(([pattern]) => pattern.test(product.name_en));
+  if (keywordMatch) return photo(keywordMatch[1]);
 
   const categoryText = `${product.category_name || ''} ${product.department || ''}`;
-  const categoryMatch = categoryImages.find(([pattern]) => pattern.test(categoryText));
-  return categoryMatch?.[1] || unsplash('photo-1542838132-92c53300491e');
+  const categoryMatch = categoryPhotos.find(([pattern]) => pattern.test(categoryText));
+  return photo(categoryMatch?.[1] || 'groceries');
 };
 
 export const getProductFallback = (product: Product): string => {

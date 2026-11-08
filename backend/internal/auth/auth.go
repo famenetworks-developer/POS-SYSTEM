@@ -573,7 +573,7 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 			`, claims.UserID).Scan(&user.ID, &user.RestaurantID, &user.Name, &user.Email, &user.Phone, &user.Role, &user.DiscountLimitPct, &user.IsActive)
 
 			if claims.RestaurantID != "" {
-				_ = s.pool.QueryRow(req.Context(), "SELECT id, name, slug, currency, timezone, language, tax_no, status FROM restaurants WHERE id = $1", claims.RestaurantID).Scan(
+				_ = s.pool.QueryRow(req.Context(), "SELECT id, name, slug, currency, timezone, language, COALESCE(tax_no, ''), status FROM restaurants WHERE id = $1", claims.RestaurantID).Scan(
 					&rest.ID, &rest.Name, &rest.Slug, &rest.Currency, &rest.Timezone, &rest.Language, &rest.TaxNo, &rest.Status,
 				)
 			}

@@ -27,7 +27,8 @@ func (s *SettingsService) MountRoutes(r chi.Router) {
 		restID := middleware.GetRestaurantID(req.Context())
 		var rest models.Restaurant
 		err := s.pool.QueryRow(req.Context(), `
-			SELECT id, name, slug, phone, email, address, logo_url, currency, timezone, language, tax_no, status, created_at, updated_at
+			SELECT id, name, slug, COALESCE(phone, ''), COALESCE(email, ''), COALESCE(address, ''), COALESCE(logo_url, ''),
+			       currency, timezone, language, COALESCE(tax_no, ''), status, created_at, updated_at
 			FROM restaurants WHERE id = $1
 		`, restID).Scan(
 			&rest.ID, &rest.Name, &rest.Slug, &rest.Phone, &rest.Email, &rest.Address, &rest.LogoURL,

@@ -161,6 +161,39 @@ type coupon struct {
 	fixedMinor, minSpend int64
 }
 
+type loyaltyRule struct {
+	PointsPerUnit        int   `json:"points_per_unit"`
+	DiscountMinorPerUnit int64 `json:"discount_minor_per_unit"`
+	AutoRedeem           bool  `json:"auto_redeem"`
+}
+
+func getLoyaltyRule(ctx context.Context, tx pgx.Tx, restID string) loyaltyRule {
+	rule := loyaltyRule{PointsPerUnit: 100, DiscountMinorPerUnit: 5000, AutoRedeem: true}
+	var raw []byte
+	if err := tx.QueryRow(ctx, "SELECT value FROM settings WHERE restaurant_id=$1 AND key='loyalty'", restID).Scan(&raw); err == nil {
+		var saved loyaltyRule
+		if json.Unmarshal(raw, &saved) == nil && saved.PointsPerUnit > 0 && saved.DiscountMinorPerUnit > 0 {
+			rule = saved
+		}
+	}
+	return rule
+}
+
+func calculateLoyaltyRedemption(availablePoints int, amountAfterOtherDiscounts int64, rule loyaltyRule) (int, int64) {
+	if !rule.AutoRedeem || availablePoints < 1 || amountAfterOtherDiscounts < 1 || rule.PointsPerUnit < 1 || rule.DiscountMinorPerUnit < 1 {
+		return 0, 0
+	}
+	units := availablePoints / rule.PointsPerUnit
+	maxUnits := int(amountAfterOtherDiscounts / rule.DiscountMinorPerUnit)
+	if units > maxUnits {
+		units = maxUnits
+	}
+	if units < 1 {
+		return 0, 0
+	}
+	return units * rule.PointsPerUnit, int64(units) * rule.DiscountMinorPerUnit
+}
+
 // findCoupon returns the store's usable coupon with this code: active, within its dates,
 // and not used up. The row is locked so concurrent sales count uses correctly.
 func findCoupon(ctx context.Context, tx pgx.Tx, restID, code string) (*coupon, error) {
@@ -247,13 +280,13 @@ func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string,
 	insertOrderQuery := `
 		INSERT INTO orders (id, restaurant_id, branch_id, order_no, token_no, type, table_id, customer_id, waiter_id, status, delivery_fee_minor, notes, shift_id, opened_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, '')::uuid, 'draft', $10, $11, $12, NOW())
-		RETURNING id, restaurant_id, branch_id, order_no, token_no, type, table_id, customer_id, waiter_id, status, subtotal_minor, discount_minor, service_charge_minor, tax_minor, delivery_fee_minor, round_off_minor, total_minor, paid_minor, notes, shift_id, opened_at
+		RETURNING id, restaurant_id, branch_id, order_no, token_no, type, table_id, customer_id, waiter_id, status, subtotal_minor, discount_minor, loyalty_points_redeemed, loyalty_discount_minor, loyalty_points_earned, service_charge_minor, tax_minor, delivery_fee_minor, round_off_minor, total_minor, paid_minor, notes, shift_id, opened_at
 	`
 	err = tx.QueryRow(ctx, insertOrderQuery,
 		orderID, restID, req.BranchID, orderNo, tokenNo, orderType, req.TableID, req.CustomerID, waiterID, req.DeliveryFee, req.Notes, req.ShiftID,
 	).Scan(
 		&order.ID, &order.RestaurantID, &order.BranchID, &order.OrderNo, &order.TokenNo, &order.Type, &order.TableID, &order.CustomerID, &order.WaiterID,
-		&order.Status, &order.SubtotalMinor, &order.DiscountMinor, &order.ServiceChargeMinor, &order.TaxMinor, &order.DeliveryFeeMinor, &order.RoundOffMinor,
+		&order.Status, &order.SubtotalMinor, &order.DiscountMinor, &order.LoyaltyPointsRedeemed, &order.LoyaltyDiscountMinor, &order.LoyaltyPointsEarned, &order.ServiceChargeMinor, &order.TaxMinor, &order.DeliveryFeeMinor, &order.RoundOffMinor,
 		&order.TotalMinor, &order.PaidMinor, &order.Notes, &order.ShiftID, &order.OpenedAt,
 	)
 	if err != nil {
@@ -371,10 +404,26 @@ func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string,
 		promotionID, couponCode = &c.id, &c.code
 	}
 
+	// Automatically use complete redemption units for the selected customer. The
+	// final point deduction is transactional at payment time.
+	var loyaltyPointsRedeemed int
+	var loyaltyDiscount int64
+	if req.CustomerID != nil && *req.CustomerID != "" {
+		rule := getLoyaltyRule(ctx, tx, restID)
+		if rule.AutoRedeem {
+			var availablePoints int
+			if err := tx.QueryRow(ctx, "SELECT loyalty_points FROM customers WHERE id=$1 AND restaurant_id=$2", *req.CustomerID, restID).Scan(&availablePoints); err != nil {
+				return nil, fmt.Errorf("customer not found: %w", err)
+			}
+			subtotal := billing.CalculateBill(billing.BillInput{Items: calcItems, RoundingUnit: 1}).SubtotalMinor
+			loyaltyPointsRedeemed, loyaltyDiscount = calculateLoyaltyRedemption(availablePoints, subtotal-couponDiscount, rule)
+		}
+	}
+
 	bill := billing.CalculateBill(billing.BillInput{
 		Items:              calcItems,
 		DiscountPercent:    0,
-		DiscountFixed:      couponDiscount,
+		DiscountFixed:      couponDiscount + loyaltyDiscount,
 		ServiceChargePct:   servicePct,
 		VatPct:             vatPct,
 		DeliveryFee:        req.DeliveryFee,
@@ -387,17 +436,20 @@ func (s *OrderService) CreateOrder(ctx context.Context, restID, waiterID string,
 	updateTotalsQuery := `
 		UPDATE orders
 		SET subtotal_minor = $1, discount_minor = $2, service_charge_minor = $3, tax_minor = $4,
-		    round_off_minor = $5, total_minor = $6, promotion_id = $8::uuid, coupon_code = $9
+		    round_off_minor = $5, total_minor = $6, promotion_id = $8::uuid, coupon_code = $9,
+		    loyalty_points_redeemed = $10, loyalty_discount_minor = $11
 		WHERE id = $7
 	`
 	if _, err := tx.Exec(ctx, updateTotalsQuery,
 		bill.SubtotalMinor, bill.OrderDiscountMinor, bill.ServiceChargeMinor, bill.TaxMinor, bill.RoundOffMinor, bill.TotalMinor, orderID,
-		promotionID, couponCode,
+		promotionID, couponCode, loyaltyPointsRedeemed, loyaltyDiscount,
 	); err != nil {
 		return nil, fmt.Errorf("failed to save order totals: %w", err)
 	}
 	order.SubtotalMinor = bill.SubtotalMinor
 	order.DiscountMinor = bill.OrderDiscountMinor
+	order.LoyaltyPointsRedeemed = loyaltyPointsRedeemed
+	order.LoyaltyDiscountMinor = loyaltyDiscount
 	order.ServiceChargeMinor = bill.ServiceChargeMinor
 	order.TaxMinor = bill.TaxMinor
 	order.RoundOffMinor = bill.RoundOffMinor
@@ -558,13 +610,17 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	var orderNo int64
 	var status string
 	var promotionID *string
+	var customerID *string
+	var loyaltyPointsRedeemed int
+	var loyaltyDiscountMinor int64
 
 	err = tx.QueryRow(ctx, `
-		SELECT branch_id, table_id, shift_id, total_minor, paid_minor, order_no, status, promotion_id::text
+		SELECT branch_id, table_id, shift_id, total_minor, paid_minor, order_no, status, promotion_id::text,
+		       customer_id::text, loyalty_points_redeemed, loyalty_discount_minor
 		FROM orders
 		WHERE id = $1 AND restaurant_id = $2
 		FOR UPDATE
-	`, orderID, restID).Scan(&branchID, &tableID, &shiftID, &totalMinor, &paidMinor, &orderNo, &status, &promotionID)
+	`, orderID, restID).Scan(&branchID, &tableID, &shiftID, &totalMinor, &paidMinor, &orderNo, &status, &promotionID, &customerID, &loyaltyPointsRedeemed, &loyaltyDiscountMinor)
 	if err != nil {
 		return nil, fmt.Errorf("order not found: %w", err)
 	}
@@ -583,6 +639,21 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 		return nil, ErrNoOpenShift
 	}
 	shiftID = payerShift
+
+	// Lock the customer balance before accepting payment. This prevents two tills
+	// from spending the same loyalty points concurrently.
+	if loyaltyPointsRedeemed > 0 {
+		if customerID == nil || *customerID == "" {
+			return nil, fmt.Errorf("loyalty redemption requires a customer")
+		}
+		var availablePoints int
+		if err := tx.QueryRow(ctx, "SELECT loyalty_points FROM customers WHERE id=$1 AND restaurant_id=$2 FOR UPDATE", *customerID, restID).Scan(&availablePoints); err != nil {
+			return nil, fmt.Errorf("failed to verify customer loyalty points: %w", err)
+		}
+		if availablePoints < loyaltyPointsRedeemed {
+			return nil, fmt.Errorf("customer loyalty balance changed; recreate the sale to use the current balance")
+		}
+	}
 
 	// A coupon counts as used when the sale is paid, within its usage limit.
 	if promotionID != nil {
@@ -616,6 +687,9 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	var paymentRecords []models.Payment
 
 	for _, p := range req.Payments {
+		if p.AmountMinor <= 0 {
+			return nil, fmt.Errorf("payment amount must be positive")
+		}
 		pID := uuid.New().String()
 		var pay models.Payment
 		err = tx.QueryRow(ctx, `
@@ -639,6 +713,9 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 				WHERE id = $2
 			`, p.AmountMinor, *shiftID)
 		}
+	}
+	if totalPaidNow != totalMinor-paidMinor {
+		return nil, fmt.Errorf("payment total must equal the invoice balance of %d", totalMinor-paidMinor)
 	}
 
 	newPaidMinor := paidMinor + totalPaidNow
@@ -739,24 +816,36 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 		}
 	}
 
-	// Award customer loyalty points (1 point per 100 BDT)
-	var customerID *string
-	_ = tx.QueryRow(ctx, "SELECT customer_id FROM orders WHERE id = $1", orderID).Scan(&customerID)
+	// Redeem the saved points and award new points (1 point per 100 BDT) in the
+	// same transaction as payment, so customer balances and invoices cannot drift.
+	loyaltyPointsEarned := 0
 	if customerID != nil && *customerID != "" {
-		pts := int(totalMinor / 10000)
-		if pts > 0 {
-			_, _ = tx.Exec(ctx, `UPDATE customers SET loyalty_points = loyalty_points + $1 WHERE id = $2`, pts, *customerID)
+		loyaltyPointsEarned = int(totalMinor / 10000)
+		_, err = tx.Exec(ctx, `
+			UPDATE customers
+			SET loyalty_points = loyalty_points - $1 + $2
+			WHERE id = $3 AND restaurant_id = $4 AND loyalty_points >= $1
+		`, loyaltyPointsRedeemed, loyaltyPointsEarned, *customerID, restID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update loyalty balance: %w", err)
+		}
+		_, err = tx.Exec(ctx, "UPDATE orders SET loyalty_points_earned=$1 WHERE id=$2", loyaltyPointsEarned, orderID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save earned loyalty points: %w", err)
 		}
 	}
 
 	// Create invoice record
 	snapshotJSON, _ := json.Marshal(map[string]interface{}{
-		"order_id":   orderID,
-		"order_no":   orderNo,
-		"invoice_no": invoiceNo,
-		"total":      totalMinor,
-		"payments":   paymentRecords,
-		"paid_at":    now,
+		"order_id":                orderID,
+		"order_no":                orderNo,
+		"invoice_no":              invoiceNo,
+		"total":                   totalMinor,
+		"loyalty_points_redeemed": loyaltyPointsRedeemed,
+		"loyalty_discount_minor":  loyaltyDiscountMinor,
+		"loyalty_points_earned":   loyaltyPointsEarned,
+		"payments":                paymentRecords,
+		"paid_at":                 now,
 	})
 	invoiceID := uuid.New().String()
 	if _, invErr := tx.Exec(ctx, `
@@ -787,13 +876,16 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 	}, "", "")
 
 	return map[string]interface{}{
-		"order_id":    orderID,
-		"invoice_no":  invoiceNo,
-		"status":      "paid",
-		"total_minor": totalMinor,
-		"paid_minor":  newPaidMinor,
-		"change_due":  changeDue,
-		"payments":    paymentRecords,
+		"order_id":                orderID,
+		"invoice_no":              invoiceNo,
+		"status":                  "paid",
+		"total_minor":             totalMinor,
+		"paid_minor":              newPaidMinor,
+		"change_due":              changeDue,
+		"payments":                paymentRecords,
+		"loyalty_points_redeemed": loyaltyPointsRedeemed,
+		"loyalty_discount_minor":  loyaltyDiscountMinor,
+		"loyalty_points_earned":   loyaltyPointsEarned,
 	}, nil
 }
 
@@ -802,7 +894,8 @@ func (s *OrderService) GetOrderDetails(ctx context.Context, restID, orderID stri
 	query := `
 		SELECT o.id, o.restaurant_id, o.branch_id, o.order_no, o.token_no, o.type, o.table_id, COALESCE(t.name, ''),
 		       o.customer_id, COALESCE(c.name, ''), o.waiter_id, COALESCE(u.name, ''), o.status,
-		       o.subtotal_minor, o.discount_minor, o.service_charge_minor, o.tax_minor, o.delivery_fee_minor,
+		       o.subtotal_minor, o.discount_minor, o.loyalty_points_redeemed, o.loyalty_discount_minor, o.loyalty_points_earned,
+		       o.service_charge_minor, o.tax_minor, o.delivery_fee_minor,
 		       o.round_off_minor, o.total_minor, o.paid_minor, COALESCE(o.notes, ''), o.shift_id, o.opened_at, o.closed_at
 		FROM orders o
 		LEFT JOIN tables t ON o.table_id = t.id
@@ -813,7 +906,7 @@ func (s *OrderService) GetOrderDetails(ctx context.Context, restID, orderID stri
 	err := s.pool.QueryRow(ctx, query, orderID, restID).Scan(
 		&o.ID, &o.RestaurantID, &o.BranchID, &o.OrderNo, &o.TokenNo, &o.Type, &o.TableID, &o.TableName,
 		&o.CustomerID, &o.CustomerName, &o.WaiterID, &o.WaiterName, &o.Status,
-		&o.SubtotalMinor, &o.DiscountMinor, &o.ServiceChargeMinor, &o.TaxMinor, &o.DeliveryFeeMinor,
+		&o.SubtotalMinor, &o.DiscountMinor, &o.LoyaltyPointsRedeemed, &o.LoyaltyDiscountMinor, &o.LoyaltyPointsEarned, &o.ServiceChargeMinor, &o.TaxMinor, &o.DeliveryFeeMinor,
 		&o.RoundOffMinor, &o.TotalMinor, &o.PaidMinor, &o.Notes, &o.ShiftID, &o.OpenedAt, &o.ClosedAt,
 	)
 	if err != nil {

@@ -16,6 +16,14 @@ export default defineConfig({
         target: 'ws://localhost:8080',
         ws: true,
       },
+      '/health': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/ready': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
     },
   },
 })

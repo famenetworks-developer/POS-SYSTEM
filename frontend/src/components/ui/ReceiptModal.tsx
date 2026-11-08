@@ -29,6 +29,7 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
   };
 
   const invNumber = invoiceNo || `BAN-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${order.order_no}`;
+  const otherDiscountMinor = Math.max(0, order.discount_minor - (order.loyalty_discount_minor || 0));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/50 backdrop-blur-sm animate-fade-in overflow-hidden">
@@ -159,10 +160,16 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 <span>Subtotal:</span>
                 <span>{formatMoney(order.subtotal_minor, restaurant?.currency)}</span>
               </div>
-              {order.discount_minor > 0 && (
+              {otherDiscountMinor > 0 && (
                 <div className="flex justify-between text-red-600 font-semibold">
-                  <span>Discount:</span>
-                  <span>-{formatMoney(order.discount_minor, restaurant?.currency)}</span>
+                  <span>Promotion Discount:</span>
+                  <span>-{formatMoney(otherDiscountMinor, restaurant?.currency)}</span>
+                </div>
+              )}
+              {order.loyalty_discount_minor > 0 && (
+                <div className="flex justify-between text-[#0D5C3A] font-semibold">
+                  <span>Loyalty ({order.loyalty_points_redeemed} pts):</span>
+                  <span>-{formatMoney(order.loyalty_discount_minor, restaurant?.currency)}</span>
                 </div>
               )}
               {order.tax_minor > 0 && (
@@ -188,6 +195,13 @@ export const ReceiptModal: React.FC<ReceiptModalProps> = ({
                 <span>{formatMoney(order.total_minor, restaurant?.currency)}</span>
               </div>
             </div>
+
+            {order.customer_name && (order.loyalty_points_redeemed > 0 || order.loyalty_points_earned > 0) && (
+              <div className="py-2 border-b border-dashed border-gray-400 text-[10px] space-y-0.5">
+                {order.loyalty_points_redeemed > 0 && <div className="flex justify-between"><span>Points Redeemed:</span><span className="font-bold">-{order.loyalty_points_redeemed}</span></div>}
+                {order.loyalty_points_earned > 0 && <div className="flex justify-between"><span>Points Earned:</span><span className="font-bold">+{order.loyalty_points_earned}</span></div>}
+              </div>
+            )}
 
             {/* Payments & Change */}
             <div className="py-2 border-b border-dashed border-gray-400 text-[10px] space-y-0.5">

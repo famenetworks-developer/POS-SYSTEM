@@ -17,14 +17,26 @@ import {
   X,
   CreditCard,
   ShoppingBag,
+  Pencil,
 } from 'lucide-react';
 
+interface LoyaltyRule {
+  points_per_unit: number;
+  discount_minor_per_unit: number;
+  auto_redeem: boolean;
+}
+
 export const CustomerManager: React.FC = () => {
-  const { restaurant } = useAuth();
+  const { restaurant, user } = useAuth();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [search, setSearch] = useState<string>('');
   const [selectedTier, setSelectedTier] = useState<string>('all');
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loyaltyRule, setLoyaltyRule] = useState<LoyaltyRule>({ points_per_unit: 100, discount_minor_per_unit: 5000, auto_redeem: true });
+  const [showRuleModal, setShowRuleModal] = useState(false);
+  const [rulePoints, setRulePoints] = useState('100');
+  const [ruleDiscount, setRuleDiscount] = useState('50');
+  const [isSavingRule, setIsSavingRule] = useState(false);
 
   // Add Customer Modal
   const [showAddModal, setShowAddModal] = useState<boolean>(false);
@@ -37,12 +49,39 @@ export const CustomerManager: React.FC = () => {
   const loadCustomers = async () => {
     setIsLoading(true);
     try {
-      const data = await api.get('/customers');
+      const [data, rule] = await Promise.all([api.get('/customers'), api.get('/customers/loyalty-settings')]);
       setCustomers(data || []);
+      if (rule) setLoyaltyRule(rule);
     } catch (e) {
       console.error(e);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const openRuleEditor = () => {
+    setRulePoints(String(loyaltyRule.points_per_unit));
+    setRuleDiscount((loyaltyRule.discount_minor_per_unit / 100).toFixed(2));
+    setShowRuleModal(true);
+  };
+
+  const handleSaveRule = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const points = Math.floor(Number(rulePoints));
+    const discountMinor = Math.round(Number(ruleDiscount) * 100);
+    if (!Number.isFinite(points) || points < 1 || !Number.isFinite(discountMinor) || discountMinor < 1) {
+      alert('Enter positive values for points and discount.');
+      return;
+    }
+    setIsSavingRule(true);
+    try {
+      const saved = await api.patch<LoyaltyRule>('/customers/loyalty-settings', { points_per_unit: points, discount_minor_per_unit: discountMinor, auto_redeem: true });
+      setLoyaltyRule(saved);
+      setShowRuleModal(false);
+    } catch (error: any) {
+      alert('Could not save redemption rule: ' + error.message);
+    } finally {
+      setIsSavingRule(false);
     }
   };
 
@@ -150,11 +189,10 @@ export const CustomerManager: React.FC = () => {
         <div className="bg-white border border-[#E2E8F0] rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-wider text-[#64748B]">Redemption Rule</p>
-            <p className="text-xs font-bold text-[#0D5C3A] mt-1">100 Pts = ৳50 Discount</p>
+            <p className="text-xs font-bold text-[#0D5C3A] mt-1">{loyaltyRule.points_per_unit.toLocaleString()} Pts = {formatMoney(loyaltyRule.discount_minor_per_unit, restaurant?.currency)} Discount</p>
+            <p className="text-[9px] text-[#64748B] mt-0.5">Automatically applied at checkout</p>
           </div>
-          <div className="w-10 h-10 rounded-xl bg-[#E0F2FE] text-[#0284C7] flex items-center justify-center font-bold">
-            <Gift className="w-5 h-5" />
-          </div>
+          {(user?.role === 'owner' || user?.role === 'admin' || user?.role === 'manager') ? <button type="button" onClick={openRuleEditor} aria-label="Edit redemption rule" title="Edit redemption rule" className="w-10 h-10 rounded-xl bg-[#E0F2FE] text-[#0284C7] hover:bg-[#BAE6FD] flex items-center justify-center font-bold transition-colors"><Pencil className="w-4 h-4" /></button> : <div className="w-10 h-10 rounded-xl bg-[#E0F2FE] text-[#0284C7] flex items-center justify-center font-bold"><Gift className="w-5 h-5" /></div>}
         </div>
       </div>
 
@@ -206,7 +244,7 @@ export const CustomerManager: React.FC = () => {
             <tbody className="divide-y divide-[#F1F5F9] text-[#0F172A]">
               {filtered.map((c) => {
                 const points = c.loyalty_points || 0;
-                const pointsValueMinor = (points / 2) * 100; // 100 pts = 50 BDT
+                const pointsValueMinor = Math.floor(points / loyaltyRule.points_per_unit) * loyaltyRule.discount_minor_per_unit;
                 const tier = (c.customer_group || 'regular').toUpperCase();
 
                 return (
@@ -268,6 +306,26 @@ export const CustomerManager: React.FC = () => {
           </table>
         </div>
       </div>
+
+      {showRuleModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
+              <div><h3 className="text-sm font-black text-[#0F172A]">Edit Redemption Rule</h3><p className="text-[11px] text-[#64748B] mt-0.5">Applied automatically when a customer checks out</p></div>
+              <button type="button" onClick={() => setShowRuleModal(false)} className="p-1 rounded-lg hover:bg-[#F1F5F9] text-[#64748B]"><X className="w-5 h-5" /></button>
+            </div>
+            <form onSubmit={handleSaveRule} className="space-y-4 pt-4">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3">
+                <label className="text-xs font-bold text-[#0F172A]">Points required<input type="number" min="1" step="1" required value={rulePoints} onChange={(e) => setRulePoints(e.target.value)} className="mt-1 w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-2 text-sm" /></label>
+                <span className="pb-2 text-sm font-black text-[#64748B]">=</span>
+                <label className="text-xs font-bold text-[#0F172A]">Discount (BDT)<input type="number" min="0.01" step="0.01" required value={ruleDiscount} onChange={(e) => setRuleDiscount(e.target.value)} className="mt-1 w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-2 text-sm" /></label>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-[11px] text-emerald-800">Complete point units are redeemed automatically. The discount is capped so an invoice can never become negative.</div>
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#E2E8F0]"><button type="button" onClick={() => setShowRuleModal(false)} className="px-4 py-2 rounded-xl border text-xs font-bold">Cancel</button><button type="submit" disabled={isSavingRule} className="px-5 py-2 rounded-xl bg-[#0D5C3A] text-white text-xs font-black disabled:opacity-50">{isSavingRule ? 'Saving...' : 'Save Rule'}</button></div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Register Customer */}
       {showAddModal && (

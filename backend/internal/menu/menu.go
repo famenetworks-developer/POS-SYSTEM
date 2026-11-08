@@ -1009,6 +1009,49 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 	})
 
 	// Customers
+	r.Get("/customers/loyalty-settings", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		rule := map[string]interface{}{"points_per_unit": 100, "discount_minor_per_unit": 5000, "auto_redeem": true}
+		var raw []byte
+		if err := s.pool.QueryRow(req.Context(), "SELECT value FROM settings WHERE restaurant_id=$1 AND key='loyalty'", restID).Scan(&raw); err == nil {
+			_ = json.Unmarshal(raw, &rule)
+		}
+		middleware.JSONSuccess(w, http.StatusOK, rule, nil)
+	})
+
+	r.Patch("/customers/loyalty-settings", func(w http.ResponseWriter, req *http.Request) {
+		restID := middleware.GetRestaurantID(req.Context())
+		claims := middleware.GetUserClaims(req.Context())
+		if claims == nil || (claims.Role != "owner" && claims.Role != "admin" && claims.Role != "manager") {
+			middleware.JSONError(w, http.StatusForbidden, "PERMISSION_DENIED", "Only owners, tenant admins, and managers can change the redemption rule", nil)
+			return
+		}
+		var body struct {
+			PointsPerUnit        int   `json:"points_per_unit"`
+			DiscountMinorPerUnit int64 `json:"discount_minor_per_unit"`
+			AutoRedeem           bool  `json:"auto_redeem"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", "Invalid redemption rule", nil)
+			return
+		}
+		if body.PointsPerUnit < 1 || body.PointsPerUnit > 1000000 || body.DiscountMinorPerUnit < 1 || body.DiscountMinorPerUnit > 1000000000 {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_RULE", "Points and discount must be positive values within the allowed range", nil)
+			return
+		}
+		value, _ := json.Marshal(body)
+		_, err := s.pool.Exec(req.Context(), `
+			INSERT INTO settings (restaurant_id,key,value,updated_at) VALUES ($1,'loyalty',$2::jsonb,NOW())
+			ON CONFLICT (restaurant_id,key) DO UPDATE SET value=EXCLUDED.value,updated_at=NOW()
+		`, restID, value)
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "SAVE_FAILED", "Could not save the redemption rule", nil)
+			return
+		}
+		s.audit.Log(req.Context(), "UPDATE_LOYALTY_RULE", "settings", nil, nil, body, "", "")
+		middleware.JSONSuccess(w, http.StatusOK, body, nil)
+	})
+
 	r.Get("/customers", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
 		search := strings.TrimSpace(req.URL.Query().Get("q"))
@@ -1230,7 +1273,7 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 		}
 
 		settingsMap := make(map[string]interface{})
-		stRows, _ := s.pool.Query(req.Context(), "SELECT key, value FROM settings WHERE restaurant_id = $1 AND key IN ('tax','receipt')", restID)
+		stRows, _ := s.pool.Query(req.Context(), "SELECT key, value FROM settings WHERE restaurant_id = $1 AND key IN ('tax','receipt','loyalty')", restID)
 		if stRows != nil {
 			for stRows.Next() {
 				var k string

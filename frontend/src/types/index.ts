@@ -208,6 +208,9 @@ export interface Order {
   status: 'draft' | 'placed' | 'in_progress' | 'served' | 'billed' | 'paid' | 'cancelled' | 'refunded';
   subtotal_minor: number;
   discount_minor: number;
+  loyalty_points_redeemed: number;
+  loyalty_discount_minor: number;
+  loyalty_points_earned: number;
   service_charge_minor: number;
   tax_minor: number;
   delivery_fee_minor: number;

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { getLanguage, setLanguage, t } from '../../lib/i18n';
@@ -33,10 +33,52 @@ export const Navbar: React.FC = () => {
   const [lang, setLangState] = useState(getLanguage());
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<'online' | 'offline' | 'syncing'>(
-    navigator.onLine ? 'online' : 'offline'
-  );
-  const [syncMessage, setSyncMessage] = useState<string>('Connection is healthy');
+  const [syncStatus, setSyncStatus] = useState<'online' | 'offline' | 'syncing'>('syncing');
+  const [syncMessage, setSyncMessage] = useState<string>('Checking store connection...');
+  const healthCheckInFlight = useRef<Promise<boolean> | null>(null);
+
+  const checkStoreConnection = useCallback(async (): Promise<boolean> => {
+    if (!navigator.onLine) {
+      setSyncStatus('offline');
+      setSyncMessage('Device has no network connection');
+      return false;
+    }
+
+    if (healthCheckInFlight.current) return healthCheckInFlight.current;
+
+    const check = (async () => {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 5000);
+
+      try {
+        const response = await fetch('/ready', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        const payload = response.ok ? await response.json().catch(() => null) : null;
+        const ready = response.ok && payload?.data?.status === 'ready';
+
+        setSyncStatus(ready ? 'online' : 'offline');
+        setSyncMessage(ready ? 'Store is available' : 'Store service is unavailable');
+        return ready;
+      } catch {
+        setSyncStatus('offline');
+        setSyncMessage('Store service is unreachable');
+        return false;
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    })();
+
+    healthCheckInFlight.current = check;
+    try {
+      return await check;
+    } finally {
+      healthCheckInFlight.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -49,30 +91,47 @@ export const Navbar: React.FC = () => {
 
   useEffect(() => {
     const handleSync = (e: any) => {
-      setSyncStatus(e.detail);
+      if (e.detail === 'syncing') {
+        setSyncStatus('syncing');
+        setSyncMessage('Syncing pending changes...');
+      } else {
+        void checkStoreConnection();
+      }
     };
     const handleOnline = () => {
-      setSyncStatus('online');
-      setSyncMessage('Connection restored');
+      setSyncStatus('syncing');
+      setSyncMessage('Checking restored connection...');
+      void checkStoreConnection();
     };
     const handleOffline = () => {
       setSyncStatus('offline');
       setSyncMessage('No internet connection');
     };
     const handleLang = () => setLangState(getLanguage());
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') void checkStoreConnection();
+    };
+
+    void checkStoreConnection();
+    const connectionTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void checkStoreConnection();
+    }, 10000);
 
     window.addEventListener('sync_status', handleSync);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('languagechange', handleLang);
+    document.addEventListener('visibilitychange', handleVisibility);
 
     return () => {
+      window.clearInterval(connectionTimer);
       window.removeEventListener('sync_status', handleSync);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
       window.removeEventListener('languagechange', handleLang);
+      document.removeEventListener('visibilitychange', handleVisibility);
     };
-  }, []);
+  }, [checkStoreConnection]);
 
   const toggleLanguage = () => {
     const next = lang === 'en' ? 'bn' : 'en';
@@ -81,9 +140,9 @@ export const Navbar: React.FC = () => {
   };
 
   const handleManualSync = async () => {
-    if (!navigator.onLine) {
-      setSyncStatus('offline');
-      setSyncMessage('Connect to the internet and try again');
+    setSyncStatus('syncing');
+    setSyncMessage('Checking store connection...');
+    if (!(await checkStoreConnection())) {
       return;
     }
     setSyncStatus('syncing');
@@ -91,7 +150,7 @@ export const Navbar: React.FC = () => {
     try {
       const result = await syncOutbox();
       await cacheBootstrapData(activeBranch?.id);
-      setSyncStatus(result.failed > 0 ? 'offline' : 'online');
+      await checkStoreConnection();
       setSyncMessage(
         result.failed > 0
           ? `${result.failed} change${result.failed === 1 ? '' : 's'} could not sync`
@@ -101,8 +160,8 @@ export const Navbar: React.FC = () => {
       );
     } catch (error) {
       console.error('[Navbar] Manual sync failed', error);
-      setSyncStatus(navigator.onLine ? 'online' : 'offline');
-      setSyncMessage('Sync failed. Please try again.');
+      await checkStoreConnection();
+      setSyncMessage('Sync failed. Store availability was rechecked.');
     }
   };
 
@@ -256,8 +315,8 @@ export const Navbar: React.FC = () => {
             data-navbar-sync
             type="button"
             onClick={handleManualSync}
-            title={`${syncMessage}. Click to sync now.`}
-            aria-label={`${syncStatus}. ${syncMessage}. Sync now`}
+            title={`${syncMessage}. Click to check and sync now.`}
+            aria-label={`${syncStatus}. ${syncMessage}. Check connection and sync now`}
             aria-live="polite"
             disabled={syncStatus === 'syncing'}
             className={`flex items-center gap-1 sm:gap-1.5 min-h-[36px] px-2.5 sm:px-3 py-1 rounded-full text-[10px] sm:text-[11px] font-bold border shrink-0 ${

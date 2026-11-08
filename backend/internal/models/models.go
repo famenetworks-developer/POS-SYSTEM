@@ -177,63 +177,66 @@ type Customer struct {
 }
 
 type Order struct {
-	ID                 string      `json:"id"`
-	RestaurantID       string      `json:"restaurant_id"`
-	BranchID           string      `json:"branch_id"`
-	OrderNo            int64       `json:"order_no"`
-	TokenNo            *int64      `json:"token_no,omitempty"`
-	Type               string      `json:"type"` // dine_in, takeaway, delivery
-	TableID            *string     `json:"table_id,omitempty"`
-	TableName          string      `json:"table_name,omitempty"`
-	CustomerID         *string     `json:"customer_id,omitempty"`
-	CustomerName       string      `json:"customer_name,omitempty"`
-	WaiterID           *string     `json:"waiter_id,omitempty"`
-	WaiterName         string      `json:"waiter_name,omitempty"`
-	Status             string      `json:"status"` // draft, placed, in_progress, served, billed, paid, cancelled, refunded
-	SubtotalMinor      int64       `json:"subtotal_minor"`
-	DiscountMinor      int64       `json:"discount_minor"`
-	ServiceChargeMinor int64       `json:"service_charge_minor"`
-	TaxMinor           int64       `json:"tax_minor"`
-	DeliveryFeeMinor   int64       `json:"delivery_fee_minor"`
-	RoundOffMinor      int64       `json:"round_off_minor"`
-	TotalMinor         int64       `json:"total_minor"`
-	PaidMinor          int64       `json:"paid_minor"`
-	Notes              string      `json:"notes"`
-	ShiftID            *string     `json:"shift_id,omitempty"`
-	Items              []OrderItem `json:"items,omitempty"`
-	Payments           []Payment   `json:"payments,omitempty"`
-	OpenedAt           time.Time   `json:"opened_at"`
-	ClosedAt           *time.Time  `json:"closed_at,omitempty"`
+	ID                    string      `json:"id"`
+	RestaurantID          string      `json:"restaurant_id"`
+	BranchID              string      `json:"branch_id"`
+	OrderNo               int64       `json:"order_no"`
+	TokenNo               *int64      `json:"token_no,omitempty"`
+	Type                  string      `json:"type"` // dine_in, takeaway, delivery
+	TableID               *string     `json:"table_id,omitempty"`
+	TableName             string      `json:"table_name,omitempty"`
+	CustomerID            *string     `json:"customer_id,omitempty"`
+	CustomerName          string      `json:"customer_name,omitempty"`
+	WaiterID              *string     `json:"waiter_id,omitempty"`
+	WaiterName            string      `json:"waiter_name,omitempty"`
+	Status                string      `json:"status"` // draft, placed, in_progress, served, billed, paid, cancelled, refunded
+	SubtotalMinor         int64       `json:"subtotal_minor"`
+	DiscountMinor         int64       `json:"discount_minor"`
+	LoyaltyPointsRedeemed int         `json:"loyalty_points_redeemed"`
+	LoyaltyDiscountMinor  int64       `json:"loyalty_discount_minor"`
+	LoyaltyPointsEarned   int         `json:"loyalty_points_earned"`
+	ServiceChargeMinor    int64       `json:"service_charge_minor"`
+	TaxMinor              int64       `json:"tax_minor"`
+	DeliveryFeeMinor      int64       `json:"delivery_fee_minor"`
+	RoundOffMinor         int64       `json:"round_off_minor"`
+	TotalMinor            int64       `json:"total_minor"`
+	PaidMinor             int64       `json:"paid_minor"`
+	Notes                 string      `json:"notes"`
+	ShiftID               *string     `json:"shift_id,omitempty"`
+	Items                 []OrderItem `json:"items,omitempty"`
+	Payments              []Payment   `json:"payments,omitempty"`
+	OpenedAt              time.Time   `json:"opened_at"`
+	ClosedAt              *time.Time  `json:"closed_at,omitempty"`
 }
 
 type OrderItem struct {
-	ID                string            `json:"id"`
-	RestaurantID      string            `json:"restaurant_id"`
-	OrderID           string            `json:"order_id"`
-	ItemID            *string           `json:"item_id,omitempty"`
-	VariantID         *string           `json:"variant_id,omitempty"`
-	NameSnapshot      string            `json:"name_snapshot"`
-	Qty               float64           `json:"qty"`
-	UnitPriceMinor    int64             `json:"unit_price_minor"`
-	DiscountMinor     int64             `json:"discount_minor"`
-	TaxMinor          int64             `json:"tax_minor"`
-	CostMinorSnapshot int64             `json:"cost_minor_snapshot"`
-	Note              string            `json:"note"`
-	Status            string            `json:"status"` // pending, preparing, ready, served, cancelled
-	KotID             *string           `json:"kot_id,omitempty"`
-	VoidedBy          *string           `json:"voided_by,omitempty"`
-	VoidReason        string            `json:"void_reason,omitempty"`
-	Addons            []OrderItemAddon  `json:"addons,omitempty"`
-	CreatedAt         time.Time         `json:"created_at"`
+	ID                string           `json:"id"`
+	RestaurantID      string           `json:"restaurant_id"`
+	OrderID           string           `json:"order_id"`
+	ItemID            *string          `json:"item_id,omitempty"`
+	VariantID         *string          `json:"variant_id,omitempty"`
+	NameSnapshot      string           `json:"name_snapshot"`
+	Qty               float64          `json:"qty"`
+	UnitPriceMinor    int64            `json:"unit_price_minor"`
+	DiscountMinor     int64            `json:"discount_minor"`
+	TaxMinor          int64            `json:"tax_minor"`
+	CostMinorSnapshot int64            `json:"cost_minor_snapshot"`
+	Note              string           `json:"note"`
+	Status            string           `json:"status"` // pending, preparing, ready, served, cancelled
+	KotID             *string          `json:"kot_id,omitempty"`
+	VoidedBy          *string          `json:"voided_by,omitempty"`
+	VoidReason        string           `json:"void_reason,omitempty"`
+	Addons            []OrderItemAddon `json:"addons,omitempty"`
+	CreatedAt         time.Time        `json:"created_at"`
 }
 
 type OrderItemAddon struct {
-	ID           string `json:"id"`
-	OrderItemID  string `json:"order_item_id"`
+	ID           string  `json:"id"`
+	OrderItemID  string  `json:"order_item_id"`
 	AddonID      *string `json:"addon_id,omitempty"`
-	NameSnapshot string `json:"name_snapshot"`
-	PriceMinor   int64  `json:"price_minor"`
-	Qty          int    `json:"qty"`
+	NameSnapshot string  `json:"name_snapshot"`
+	PriceMinor   int64   `json:"price_minor"`
+	Qty          int     `json:"qty"`
 }
 
 type KOT struct {
@@ -266,21 +269,21 @@ type Payment struct {
 }
 
 type Shift struct {
-	ID                 string         `json:"id"`
-	RestaurantID       string         `json:"restaurant_id"`
-	BranchID           string         `json:"branch_id"`
-	CashierID          string         `json:"cashier_id"`
-	CashierName        string         `json:"cashier_name,omitempty"`
-	TerminalID         string         `json:"terminal_id"`
-	OpenedAt           time.Time      `json:"opened_at"`
-	ClosedAt           *time.Time     `json:"closed_at,omitempty"`
-	OpeningCashMinor   int64          `json:"opening_cash_minor"`
-	ExpectedCashMinor  int64          `json:"expected_cash_minor"`
-	CountedCashMinor   int64          `json:"counted_cash_minor"`
-	VarianceMinor      int64          `json:"variance_minor"`
-	Note               string         `json:"note"`
-	Status             string         `json:"status"` // open, closed
-	CashMovements      []CashMovement `json:"cash_movements,omitempty"`
+	ID                string         `json:"id"`
+	RestaurantID      string         `json:"restaurant_id"`
+	BranchID          string         `json:"branch_id"`
+	CashierID         string         `json:"cashier_id"`
+	CashierName       string         `json:"cashier_name,omitempty"`
+	TerminalID        string         `json:"terminal_id"`
+	OpenedAt          time.Time      `json:"opened_at"`
+	ClosedAt          *time.Time     `json:"closed_at,omitempty"`
+	OpeningCashMinor  int64          `json:"opening_cash_minor"`
+	ExpectedCashMinor int64          `json:"expected_cash_minor"`
+	CountedCashMinor  int64          `json:"counted_cash_minor"`
+	VarianceMinor     int64          `json:"variance_minor"`
+	Note              string         `json:"note"`
+	Status            string         `json:"status"` // open, closed
+	CashMovements     []CashMovement `json:"cash_movements,omitempty"`
 }
 
 type CashMovement struct {

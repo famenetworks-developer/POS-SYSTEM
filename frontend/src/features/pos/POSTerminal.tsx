@@ -56,6 +56,12 @@ interface HeldSale {
   registerId?: string;
 }
 
+interface LoyaltyRule {
+  points_per_unit: number;
+  discount_minor_per_unit: number;
+  auto_redeem: boolean;
+}
+
 export const POSTerminal: React.FC = () => {
   const { user, restaurant, activeBranch } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -66,6 +72,7 @@ export const POSTerminal: React.FC = () => {
   const [registers, setRegisters] = useState<Register[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [promotions, setPromotions] = useState<Promotion[]>([]);
+  const [loyaltyRule, setLoyaltyRule] = useState<LoyaltyRule>({ points_per_unit: 100, discount_minor_per_unit: 5000, auto_redeem: true });
 
   // Navigation & Search State
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -146,6 +153,7 @@ export const POSTerminal: React.FC = () => {
       }
       setCustomers(data.customers || []);
       setPromotions(data.promotions || []);
+      if (data.settings?.loyalty) setLoyaltyRule(data.settings.loyalty);
     } catch (e) {
       console.error('POS bootstrap load error:', e);
     }
@@ -441,7 +449,16 @@ export const POSTerminal: React.FC = () => {
           ? Math.round((cartSubtotalMinor * appliedCoupon.discount_pct) / 100)
           : appliedCoupon.discount_minor
       );
-  const taxableBase = Math.max(0, cartSubtotalMinor - couponDiscountMinor);
+  const loyaltyUnitsAvailable = selectedCustomer && loyaltyRule.auto_redeem
+    ? Math.floor((selectedCustomer.loyalty_points || 0) / loyaltyRule.points_per_unit)
+    : 0;
+  const loyaltyUnitsUsable = Math.min(
+    loyaltyUnitsAvailable,
+    Math.floor(Math.max(0, cartSubtotalMinor - couponDiscountMinor) / loyaltyRule.discount_minor_per_unit)
+  );
+  const loyaltyPointsRedeemed = loyaltyUnitsUsable * loyaltyRule.points_per_unit;
+  const loyaltyDiscountMinor = loyaltyUnitsUsable * loyaltyRule.discount_minor_per_unit;
+  const taxableBase = Math.max(0, cartSubtotalMinor - couponDiscountMinor - loyaltyDiscountMinor);
   // Super shop standard VAT: 5% in Bangladesh
   const vatMinor = Math.round(taxableBase * 0.05);
   const deliveryCostMinor = orderType === 'delivery' ? deliveryFeeMinor : 0;
@@ -510,6 +527,7 @@ export const POSTerminal: React.FC = () => {
         table_name: selectedRegister?.name || 'Counter 01',
         customer_name: selectedCustomer?.name,
         waiter_name: user?.name,
+        loyalty_points_earned: payRes.loyalty_points_earned,
       });
       setReceiptInvoiceNo(payRes.invoice_no);
       setReceiptChange(payRes.change_due || (tenderedMinor > serverTotalMinor ? tenderedMinor - serverTotalMinor : 0));
@@ -1185,6 +1203,12 @@ export const POSTerminal: React.FC = () => {
               <div className="flex justify-between text-red-600 font-bold">
                 <span>Coupon Discount:</span>
                 <span>-{formatMoney(couponDiscountMinor, restaurant?.currency)}</span>
+              </div>
+            )}
+            {loyaltyDiscountMinor > 0 && (
+              <div className="flex justify-between text-[#0D5C3A] font-bold">
+                <span>Loyalty Redemption ({loyaltyPointsRedeemed} pts):</span>
+                <span>-{formatMoney(loyaltyDiscountMinor, restaurant?.currency)}</span>
               </div>
             )}
             <div className="flex justify-between">

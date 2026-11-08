@@ -1,30 +1,28 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, X } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import { BarcodeCamera, cameraErrorMessage, startBarcodeCamera } from '../../lib/barcodeCamera';
 
 // The camera must read the same value this many times in a row before it is accepted,
 // which filters out partial misreads.
 const REQUIRED_MATCHING_READS = 2;
-// After a code is accepted, the same code is ignored for this long, so holding an item
-// in front of the camera adds it once. Scan it again after the pause to add another.
+// A code that was not found is not reported again for this long, so the message stays readable.
 const SAME_CODE_PAUSE_MS = 2000;
 
 export interface BasketScanResult {
   ok: boolean;
   message: string;
-  // Stop the camera, e.g. when the cashier must enter a weight first.
-  close?: boolean;
 }
 
 interface CameraBasketScannerProps {
   // Looks up the code and adds the product to the basket.
   onCode: (code: string) => Promise<BasketScanResult>;
+  // Called when the camera should close: after an item was added, or when the cashier taps Cancel.
   onClose: () => void;
-  basketCount: number;
 }
 
-// Full-screen camera that keeps scanning and adds every product it reads to the basket.
-export const CameraBasketScanner: React.FC<CameraBasketScannerProps> = ({ onCode, onClose, basketCount }) => {
+// Full-screen camera that scans one item: once a product is read and added, it closes.
+// If the code is not a product, it says so and keeps scanning.
+export const CameraBasketScanner: React.FC<CameraBasketScannerProps> = ({ onCode, onClose }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const onCodeRef = useRef(onCode);
   const onCloseRef = useRef(onClose);
@@ -58,9 +56,14 @@ export const CameraBasketScanner: React.FC<CameraBasketScannerProps> = ({ onCode
       const result = await onCodeRef.current(text);
       busy = false;
       if (cancelled) return;
-      setLast(result);
-      if (result.ok) navigator.vibrate?.(60);
-      if (result.close) onCloseRef.current();
+      if (!result.ok) setLast(result);
+      if (result.ok) {
+        // One item per scan: stop reading and close.
+        cancelled = true;
+        camera?.stop();
+        navigator.vibrate?.(60);
+        onCloseRef.current();
+      }
     };
 
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -95,18 +98,18 @@ export const CameraBasketScanner: React.FC<CameraBasketScannerProps> = ({ onCode
   }, []);
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#0F172A]" role="dialog" aria-modal="true" aria-label="Scan items into the basket">
+    <div className="fixed inset-0 z-50 flex flex-col bg-[#0F172A]" role="dialog" aria-modal="true" aria-label="Scan an item into the basket">
       <div className="flex items-center gap-3 px-4 py-3 text-white">
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold">Scan items into the basket</p>
-          <p className="text-xs text-white/70">Basket: {basketCount} {basketCount === 1 ? 'item' : 'items'}</p>
+          <p className="text-sm font-bold">Scan an item</p>
+          <p className="text-xs text-white/70">It is added to the basket and the camera closes.</p>
         </div>
         <button
           type="button"
           onClick={onClose}
           className="inline-flex items-center gap-1.5 min-h-[40px] rounded-lg bg-white px-4 text-sm font-bold text-[#0F172A]"
         >
-          <X className="w-4 h-4" /> Done
+          <X className="w-4 h-4" /> Cancel
         </button>
       </div>
 
@@ -125,16 +128,12 @@ export const CameraBasketScanner: React.FC<CameraBasketScannerProps> = ({ onCode
 
       <div className="min-h-[72px] px-4 py-3" aria-live="polite">
         {last ? (
-          <div
-            className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-bold ${
-              last.ok ? 'bg-[#0D5C3A] text-white' : 'bg-amber-100 text-amber-900'
-            }`}
-          >
-            {last.ok ? <CheckCircle2 className="w-5 h-5 shrink-0" /> : <AlertTriangle className="w-5 h-5 shrink-0" />}
+          <div className="flex items-center gap-2 rounded-xl bg-amber-100 px-3 py-2.5 text-sm font-bold text-amber-900">
+            <AlertTriangle className="w-5 h-5 shrink-0" />
             <span className="min-w-0 flex-1 truncate">{last.message}</span>
           </div>
         ) : (
-          <p className="text-center text-xs text-white/70">Point the camera at a barcode. Each item is added as soon as it is read.</p>
+          <p className="text-center text-xs text-white/70">Point the camera at the barcode.</p>
         )}
       </div>
     </div>

@@ -203,7 +203,7 @@ func RequireAppAccess(next http.Handler) http.Handler {
 			allowed = roleAllowed(claims.Role, "owner", "manager", "delivery_staff")
 		case strings.HasPrefix(path, "/customers"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
-		case strings.HasPrefix(path, "/sync") || path == "/pos/bootstrap" || strings.HasPrefix(path, "/promotions"):
+		case strings.HasPrefix(path, "/sync") || path == "/pos/bootstrap" || strings.HasPrefix(path, "/pos/basket") || strings.HasPrefix(path, "/promotions"):
 			allowed = roleAllowed(claims.Role, "owner", "manager", "cashier")
 		}
 

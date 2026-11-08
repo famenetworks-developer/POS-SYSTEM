@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -26,7 +27,30 @@ type MenuService struct {
 	pool  *pgxpool.Pool
 	hub   *platform.WSHub
 	audit *audit.AuditService
+	// Current checkout basket per user (user ID -> basketState), shared live between that
+	// user's open checkout screens, e.g. a phone used to scan and the counter computer.
+	// Kept in memory only: a restart empties it, like closing the browser would.
+	baskets sync.Map
+	// Serialises basket read-modify-write (adding one scanned item).
+	basketMu sync.Mutex
 }
+
+// basketLine is one product in a shared checkout basket.
+type basketLine struct {
+	ProductID      string  `json:"product_id"`
+	Qty            float64 `json:"qty"`
+	UnitPriceMinor int64   `json:"unit_price_minor"`
+	DiscountMinor  int64   `json:"discount_minor"`
+	Note           string  `json:"note"`
+}
+
+// basketState is the whole basket as last sent by one of the user's screens.
+type basketState struct {
+	DeviceID string       `json:"device_id"`
+	Lines    []basketLine `json:"lines"`
+}
+
+const maxBasketLines = 500
 
 func NewMenuService(pool *pgxpool.Pool, hub *platform.WSHub, audit *audit.AuditService) *MenuService {
 	return &MenuService{pool: pool, hub: hub, audit: audit}
@@ -1056,6 +1080,98 @@ func (s *MenuService) MountRoutes(r chi.Router) {
 	})
 
 	// POS Bootstrap (One-call complete load for cashiers and offline IndexedDB cache)
+	// Shared checkout basket: GET returns the user's current basket, POST replaces it and
+	// pushes it live ("basket.sync") to the user's other screens. Prices are only a display
+	// copy here; the order and payment endpoints do their own checks.
+	r.Get("/pos/basket", func(w http.ResponseWriter, req *http.Request) {
+		claims := middleware.GetUserClaims(req.Context())
+		state := basketState{Lines: []basketLine{}}
+		if v, ok := s.baskets.Load(claims.UserID); ok {
+			state = v.(basketState)
+		}
+		middleware.JSONSuccess(w, http.StatusOK, state, nil)
+	})
+
+	// Adds one product to the user's basket, e.g. from the Scan barcode page, and pushes the
+	// updated basket live to the user's checkout screens. The price comes from the database.
+	r.Post("/pos/basket/add", func(w http.ResponseWriter, req *http.Request) {
+		claims := middleware.GetUserClaims(req.Context())
+		restID := middleware.GetRestaurantID(req.Context())
+		var body struct {
+			ProductID string `json:"product_id"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.ProductID == "" {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", "A product is required", nil)
+			return
+		}
+		var name string
+		var priceMinor int64
+		var weighted bool
+		err := s.pool.QueryRow(req.Context(), `
+			SELECT name_en, base_price_minor, COALESCE(is_weighted, FALSE)
+			FROM menu_items
+			WHERE id::text = $1 AND restaurant_id = $2 AND is_active = TRUE
+		`, body.ProductID, restID).Scan(&name, &priceMinor, &weighted)
+		if err != nil {
+			middleware.JSONError(w, http.StatusNotFound, "NOT_FOUND", "Product not found", nil)
+			return
+		}
+		if weighted {
+			middleware.JSONError(w, http.StatusUnprocessableEntity, "WEIGHT_REQUIRED", "Items sold by weight must be weighed at the till", nil)
+			return
+		}
+
+		s.basketMu.Lock()
+		state := basketState{Lines: []basketLine{}}
+		if v, ok := s.baskets.Load(claims.UserID); ok {
+			state = v.(basketState)
+		}
+		lines := append([]basketLine(nil), state.Lines...)
+		found := false
+		for i := range lines {
+			if lines[i].ProductID == body.ProductID {
+				lines[i].Qty++
+				found = true
+				break
+			}
+		}
+		if !found {
+			if len(lines) >= maxBasketLines {
+				s.basketMu.Unlock()
+				middleware.JSONError(w, http.StatusConflict, "BASKET_FULL", "The basket is full", nil)
+				return
+			}
+			lines = append(lines, basketLine{ProductID: body.ProductID, Qty: 1, UnitPriceMinor: priceMinor})
+		}
+		state = basketState{DeviceID: "scan-page", Lines: lines}
+		s.baskets.Store(claims.UserID, state)
+		s.basketMu.Unlock()
+
+		s.hub.BroadcastUser(claims.UserID, "basket.sync", state)
+		middleware.JSONSuccess(w, http.StatusOK, map[string]interface{}{"name": name, "lines": len(lines)}, nil)
+	})
+
+	r.Post("/pos/basket", func(w http.ResponseWriter, req *http.Request) {
+		claims := middleware.GetUserClaims(req.Context())
+		var state basketState
+		if err := json.NewDecoder(http.MaxBytesReader(w, req.Body, 256<<10)).Decode(&state); err != nil {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BODY", "Invalid basket", nil)
+			return
+		}
+		if state.DeviceID == "" || len(state.Lines) > maxBasketLines {
+			middleware.JSONError(w, http.StatusBadRequest, "INVALID_BASKET", "Invalid basket", nil)
+			return
+		}
+		if state.Lines == nil {
+			state.Lines = []basketLine{}
+		}
+		s.basketMu.Lock()
+		s.baskets.Store(claims.UserID, state)
+		s.basketMu.Unlock()
+		s.hub.BroadcastUser(claims.UserID, "basket.sync", state)
+		middleware.JSONSuccess(w, http.StatusOK, map[string]int{"lines": len(state.Lines)}, nil)
+	})
+
 	r.Get("/pos/bootstrap", func(w http.ResponseWriter, req *http.Request) {
 		restID := middleware.GetRestaurantID(req.Context())
 		branchID := req.URL.Query().Get("branch_id")

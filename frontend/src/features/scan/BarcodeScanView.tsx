@@ -52,6 +52,8 @@ const isProductCode = (code: string) => code.length <= MAX_PRODUCT_CODE_LENGTH &
 
 export const BarcodeScanView: React.FC = () => {
   const { user, restaurant, activeBranch } = useAuth();
+  // Roles that sell at the till get each scanned product added to their basket.
+  const canSell = user?.role === 'cashier' || user?.role === 'owner' || user?.role === 'manager';
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraRef = useRef<BarcodeCamera | null>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -150,8 +152,18 @@ export const BarcodeScanView: React.FC = () => {
       const item = await api.get<MenuItem>(`/items/barcode/${encodeURIComponent(text)}`);
       setLookup({ status: 'found', scan, item });
       setPopupItem(item);
-      showToast('success', 'Scan successful · product found');
       void recordScan(scan, item);
+      if (canSell) {
+        // Put the item in this cashier's basket; open checkout screens update live.
+        try {
+          await api.post('/pos/basket/add', { product_id: item.id });
+          showToast('success', `Added to basket · ${item.name_en}`);
+        } catch (addErr) {
+          showToast('error', addErr instanceof ApiError ? addErr.message : 'Product found, but it could not be added to the basket');
+        }
+      } else {
+        showToast('success', 'Scan successful · product found');
+      }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'NOT_FOUND') {
         setLookup({ status: 'not_found', scan });
@@ -162,7 +174,7 @@ export const BarcodeScanView: React.FC = () => {
         showToast('error', 'Scan failed · could not look up the product');
       }
     }
-  }, [showToast, recordScan]);
+  }, [showToast, recordScan, canSell]);
 
   const stopCamera = useCallback(() => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);

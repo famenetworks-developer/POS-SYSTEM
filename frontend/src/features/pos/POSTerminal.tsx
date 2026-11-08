@@ -10,6 +10,7 @@ import { getProductFallback, getProductImage } from '../../lib/productImages';
 import { ReceiptModal } from '../../components/ui/ReceiptModal';
 import { ShiftBar } from './ShiftBar';
 import { BasketScanResult, CameraBasketScanner } from './CameraBasketScanner';
+import { CartLine, useSharedBasket } from './useSharedBasket';
 import {
   Search,
   Plus,
@@ -45,13 +46,6 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 
-interface CartLine {
-  product: Product;
-  qty: number;
-  unitPriceMinor: number;
-  discountMinor: number;
-  note: string;
-}
 
 interface HeldSale {
   id: string;
@@ -77,16 +71,19 @@ export const POSTerminal: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [quickFilter, setQuickFilter] = useState<'all' | 'deals' | 'popular' | 'new'>('all');
   const [showAllProducts, setShowAllProducts] = useState<boolean>(false);
-  const [searchQuery, setSearchQuery] = useState<string>('');
   const [scanFlash, setScanFlash] = useState<boolean>(false);
   const [showCameraScanner, setShowCameraScanner] = useState(false);
-  const searchInputRef = useRef<HTMLInputElement>(null);
+  // Short confirmation shown after the camera adds an item and closes.
+  const [scanToast, setScanToast] = useState<{ ok: boolean; text: string } | null>(null);
+  const scanToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sales State
   const [orderType, setOrderType] = useState<'walk_in' | 'pickup' | 'delivery'>('walk_in');
   const [selectedRegister, setSelectedRegister] = useState<Register | null>(null);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
+  // The basket is shared live with this cashier's other checkout screens (e.g. a phone used to scan).
+  useSharedBasket(cart, setCart, products);
   const [appliedCoupon, setAppliedCoupon] = useState<Promotion | null>(null);
   const [couponCodeInput, setCouponCodeInput] = useState<string>('');
   const [couponError, setCouponError] = useState<string>('');
@@ -156,10 +153,6 @@ export const POSTerminal: React.FC = () => {
 
   useEffect(() => {
     loadData();
-    // Auto focus search / scanner
-    if (searchInputRef.current) {
-      searchInputRef.current.focus();
-    }
   }, [activeBranch?.id]);
 
   useEffect(() => {
@@ -171,13 +164,10 @@ export const POSTerminal: React.FC = () => {
     }
   }, [searchParams, setSearchParams]);
 
-  // Keyboard Shortcuts (F2 search, F4 hold, F8 clear, F9 checkout, Esc close)
+  // Keyboard Shortcuts (F4 hold, F8 clear, F9 checkout, Esc close)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'F2') {
-        e.preventDefault();
-        searchInputRef.current?.focus();
-      } else if (e.key === 'F4') {
+      if (e.key === 'F4') {
         e.preventDefault();
         handleHoldSale();
       } else if (e.key === 'F8') {
@@ -218,37 +208,61 @@ export const POSTerminal: React.FC = () => {
     }
   };
 
-  // Barcode rapid scanner handler (USB scanners type the code and press Enter)
-  const handleSearchKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const code = searchQuery.trim();
-      if (!code) return;
-
-      const product = await findProductByCode(code);
-      if (product) {
-        addProductToCart(product);
-        triggerScanFeedback();
-        setSearchQuery('');
-      }
-      // Otherwise keep the text as a search filter.
-    }
+  const showScanToast = (ok: boolean, text: string) => {
+    if (scanToastTimerRef.current) clearTimeout(scanToastTimerRef.current);
+    setScanToast({ ok, text });
+    scanToastTimerRef.current = setTimeout(() => setScanToast(null), 2500);
   };
 
-  // Phone/tablet camera: every product read is added to the basket.
-  const handleCameraCode = async (code: string): Promise<BasketScanResult> => {
+  // Looks up a scanned code and adds the product to the basket once (camera or USB scanner).
+  const handleScannedCode = async (code: string): Promise<BasketScanResult> => {
     if (code.length > 64 || /\s/.test(code)) {
       return { ok: false, message: 'That is not a product barcode' };
     }
     const product = await findProductByCode(code);
     if (!product) return { ok: false, message: `No product with code ${code}` };
     addProductToCart(product);
-    if (product.is_weighted) {
-      return { ok: true, message: `${product.name_en}: enter the weight`, close: true };
+    if (!product.is_weighted) {
+      // Weighted items open the weight box instead.
+      triggerScanFeedback();
+      showScanToast(true, `Added ${product.name_en} · ${formatMoney(product.base_price_minor, restaurant?.currency)}`);
     }
-    triggerScanFeedback();
-    return { ok: true, message: `Added ${product.name_en} · ${formatMoney(product.base_price_minor, restaurant?.currency)}` };
+    return { ok: true, message: '' };
   };
+
+  // USB barcode scanners act like a keyboard: they type the code very fast and press Enter.
+  // With no search box, the page listens for that burst itself. Typing in form fields
+  // (customer name, cash tendered, ...) is left alone.
+  const scannedCodeHandlerRef = useRef(handleScannedCode);
+  useEffect(() => {
+    scannedCodeHandlerRef.current = handleScannedCode;
+  });
+  useEffect(() => {
+    let buffer = '';
+    let lastKeyAt = 0;
+    const MAX_GAP_MS = 60; // scanners send keys a few ms apart; people type far slower
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+      const now = Date.now();
+      if (now - lastKeyAt > MAX_GAP_MS) buffer = '';
+      lastKeyAt = now;
+      if (e.key === 'Enter') {
+        const code = buffer.trim();
+        buffer = '';
+        if (code.length >= 3) {
+          e.preventDefault();
+          void scannedCodeHandlerRef.current(code).then((res) => {
+            if (!res.ok) showScanToast(false, res.message);
+          });
+        }
+        return;
+      }
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) buffer += e.key;
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const triggerScanFeedback = () => {
     setScanFlash(true);
@@ -531,18 +545,6 @@ export const POSTerminal: React.FC = () => {
       return false;
     }
 
-    // Search query
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase().trim();
-      const matchName = p.name_en.toLowerCase().includes(q);
-      const matchBn = p.name_bn && p.name_bn.includes(q);
-      const matchSku = p.sku && p.sku.toLowerCase().includes(q);
-      const matchBarcode = p.barcode && p.barcode.includes(q);
-      const matchBrand = p.brand && p.brand.toLowerCase().includes(q);
-      const matchDept = p.department && p.department.toLowerCase().includes(q);
-      return matchName || matchBn || matchSku || matchBarcode || matchBrand || matchDept;
-    }
-
     return true;
   });
 
@@ -673,28 +675,13 @@ export const POSTerminal: React.FC = () => {
         <div className="storefront-hero shrink-0 overflow-hidden" role="img" aria-label="Customers shopping for fresh groceries in a modern NovaMart supermarket">
         </div>
 
-        {/* Rapid Barcode Scanner & Search Bar */}
+        {/* Camera scanning (USB scanners are handled in the background) */}
         <div className="catalogue-search px-3 py-3 flex flex-col sm:flex-row gap-2.5">
-          <div className="relative flex-1">
-            <div className="absolute left-4 top-1/2 -translate-y-1/2 flex items-center justify-center text-[#6B7175] pointer-events-none z-10">
-              <Search className="w-[18px] h-[18px]" strokeWidth={1.8} />
-            </div>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              placeholder="Search products"
-              aria-label="Search products by name, brand, SKU or barcode"
-              className="w-full bg-white border border-[#D5D8DC] rounded-full pl-11 pr-4 py-3 text-sm font-normal text-[#2E3138] placeholder-[#6B7175] focus:bg-white focus:border-[#2E3138] focus:outline-none focus:ring-0 transition-colors"
-            />
-          </div>
           <button
             type="button"
             onClick={() => setShowCameraScanner(true)}
-            title="Scan items into the basket with this device's camera"
-            className="inline-flex shrink-0 items-center justify-center gap-2 min-h-[46px] rounded-full bg-[#E21B70] px-5 text-sm font-bold text-white hover:bg-[#C91661]"
+            title="Scan an item into the basket with this device's camera"
+            className="inline-flex w-full items-center justify-center gap-2 min-h-[48px] rounded-full bg-[#E21B70] px-5 text-sm font-bold text-white shadow-[0_2px_12px_rgba(0,0,0,.12)] hover:bg-[#C91661]"
           >
             <ScanBarcode className="w-[18px] h-[18px]" /> Scan with camera
           </button>
@@ -1593,10 +1580,21 @@ export const POSTerminal: React.FC = () => {
       {/* Receipt Modal (Upon Successful Sale) */}
       {showCameraScanner && (
         <CameraBasketScanner
-          onCode={handleCameraCode}
+          onCode={handleScannedCode}
           onClose={() => setShowCameraScanner(false)}
-          basketCount={cart.reduce((s, c) => s + c.qty, 0)}
         />
+      )}
+
+      {scanToast && (
+        <div
+          role="status"
+          className={`fixed left-1/2 top-24 z-50 -translate-x-1/2 inline-flex max-w-[90vw] items-center gap-2 rounded-full px-4 py-2.5 text-sm font-bold shadow-lg ${
+            scanToast.ok ? 'bg-[#0D5C3A] text-white' : 'bg-amber-100 text-amber-900'
+          }`}
+        >
+          {scanToast.ok ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+          <span className="truncate">{scanToast.text}</span>
+        </div>
       )}
 
       {completedOrder && (
@@ -1607,10 +1605,7 @@ export const POSTerminal: React.FC = () => {
           invoiceNo={receiptInvoiceNo}
           changeDue={receiptChange}
           onClose={() => setCompletedOrder(null)}
-          onNewSale={() => {
-            setCompletedOrder(null);
-            searchInputRef.current?.focus();
-          }}
+          onNewSale={() => setCompletedOrder(null)}
         />
       )}
     </div>

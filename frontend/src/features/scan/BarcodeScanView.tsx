@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { api, ApiError } from '../../lib/api';
-import { BarcodeCamera, cameraErrorMessage, DetectedBarcode, listCameras, startBarcodeCamera } from '../../lib/barcodeCamera';
+import { BarcodeCamera, cameraErrorMessage, DetectedBarcode, isTouchDevice, listCameras, startBarcodeCamera } from '../../lib/barcodeCamera';
 import { formatMoney } from '../../lib/money';
 import { wsHub } from '../../lib/ws';
 import { getProductImage } from '../../lib/productImages';
@@ -231,6 +231,14 @@ export const BarcodeScanView: React.FC = () => {
   }, [lookupCode, stopCamera]);
 
   useEffect(() => stopCamera, [stopCamera]);
+
+  // On phones the camera opens as soon as the page loads (once per visit).
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedRef.current || !isTouchDevice()) return;
+    autoStartedRef.current = true;
+    void startCamera();
+  }, [startCamera]);
 
   const closeCatalog = useCallback(() => setCatalogOpen(false), []);
 

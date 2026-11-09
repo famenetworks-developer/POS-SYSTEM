@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Keyboard, Search } from 'lucide-react';
 import { api } from '../../lib/api';
 import { formatMoney } from '../../lib/money';
+import { isTouchDevice } from '../../lib/barcodeCamera';
 
 // One product whose barcode or SKU starts with what was typed (GET /items/suggest).
 interface CodeSuggestion {
@@ -106,7 +107,8 @@ export const CodeLookupBox: React.FC<CodeLookupBoxProps> = ({ onLookup }) => {
             onBlur={() => setOpen(false)}
             onKeyDown={handleKeyDown}
             autoComplete="off"
-            autoFocus
+            // Desktop: ready for a USB scanner. Phones: no focus, so the keyboard stays hidden.
+            autoFocus={!isTouchDevice()}
             role="combobox"
             aria-expanded={showList}
             aria-controls="manual-barcode-suggestions"

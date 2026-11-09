@@ -168,3 +168,9 @@ export const cameraErrorMessage = (err: unknown): string => {
   if (name === 'NotReadableError') return 'The camera is being used by another app. Close it and try again.';
   return 'Could not start the camera.';
 };
+
+// True on touch-first devices such as phones (and tablets): no mouse, finger input only.
+// On these the scan page opens the camera straight away instead of focusing the code box,
+// which would pop up the on-screen keyboard.
+export const isTouchDevice = (): boolean =>
+  typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse) and (hover: none)').matches;

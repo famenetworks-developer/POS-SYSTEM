@@ -5,12 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
@@ -24,10 +27,23 @@ type AuthService struct {
 	pool  *pgxpool.Pool
 	cfg   *config.Config
 	audit *audit.AuditService
+	pins  *pinGuard
+}
+
+// pinLoginRoles may log in with a PIN: the staff who work the till. Everyone else, including
+// the owner and admins, logs in with email and password, so a guessed PIN never gives full access.
+var pinLoginRoles = []string{"cashier", "manager"}
+
+// PINLockedError is returned while PIN login at a branch is blocked after too many wrong PINs.
+type PINLockedError struct{ Wait time.Duration }
+
+func (e *PINLockedError) Error() string {
+	minutes := int(e.Wait.Minutes()) + 1
+	return fmt.Sprintf("Too many wrong PINs. PIN login at this branch is paused for %d minute(s). You can still log in with email.", minutes)
 }
 
 func NewAuthService(pool *pgxpool.Pool, cfg *config.Config, audit *audit.AuditService) *AuthService {
-	return &AuthService{pool: pool, cfg: cfg, audit: audit}
+	return &AuthService{pool: pool, cfg: cfg, audit: audit, pins: newPINGuard()}
 }
 
 type RegisterRequest struct {
@@ -328,6 +344,12 @@ func (s *AuthService) PINLogin(ctx context.Context, req PINLoginRequest) (map[st
 	if req.BranchID == "" || req.PIN == "" {
 		return nil, fmt.Errorf("branch_id and pin are required")
 	}
+	if _, err := uuid.Parse(req.BranchID); err != nil {
+		return nil, fmt.Errorf("invalid PIN for selected branch")
+	}
+	if wait := s.pins.blockedFor(req.BranchID, time.Now()); wait > 0 {
+		return nil, &PINLockedError{Wait: wait}
+	}
 
 	// Find user belonging to this branch with this PIN
 	pinHash := hashString(req.PIN)
@@ -339,13 +361,16 @@ func (s *AuthService) PINLogin(ctx context.Context, req PINLoginRequest) (map[st
 		SELECT u.id, u.restaurant_id, u.name, u.email, u.role, u.discount_limit_pct, u.is_active, u.pin_hash
 		FROM users u
 		JOIN user_branches ub ON u.id = ub.user_id
-		WHERE ub.branch_id = $1 AND u.pin_hash = $2 AND u.is_active = TRUE
+		WHERE ub.branch_id = $1 AND u.pin_hash = $2 AND u.is_active = TRUE AND u.role = ANY($3)
 		LIMIT 1
 	`
-	err := s.pool.QueryRow(ctx, query, req.BranchID, pinHash).Scan(
+	err := s.pool.QueryRow(ctx, query, req.BranchID, pinHash, pinLoginRoles).Scan(
 		&user.ID, &restID, &user.Name, &user.Email, &user.Role, &user.DiscountLimitPct, &user.IsActive, &storedPinHash,
 	)
 	if err != nil {
+		if s.pins.recordFailure(req.BranchID, time.Now()) {
+			s.audit.Log(ctx, "PIN_LOGIN_LOCKED", "branch", &req.BranchID, nil, map[string]int{"failures": maxPINFailures}, "", "")
+		}
 		return nil, fmt.Errorf("invalid PIN for selected branch")
 	}
 
@@ -526,6 +551,36 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 		middleware.JSONSuccess(w, http.StatusOK, res, nil)
 	})
 
+	// Public list of branches for the PIN login page, which is used before anyone is logged in.
+	// Only the branch ID and the branch and store names are shown.
+	r.Get("/auth/branches", func(w http.ResponseWriter, req *http.Request) {
+		rows, err := s.pool.Query(req.Context(), `
+			SELECT b.id::text, b.name, r.name
+			FROM branches b
+			JOIN restaurants r ON r.id = b.restaurant_id
+			WHERE b.is_active = TRUE AND r.status = 'active'
+			ORDER BY r.name, b.name
+		`)
+		if err != nil {
+			middleware.JSONError(w, http.StatusInternalServerError, "FETCH_FAILED", "Could not load branches", nil)
+			return
+		}
+		defer rows.Close()
+		type loginBranch struct {
+			ID        string `json:"id"`
+			Name      string `json:"name"`
+			StoreName string `json:"store_name"`
+		}
+		list := []loginBranch{}
+		for rows.Next() {
+			var b loginBranch
+			if rows.Scan(&b.ID, &b.Name, &b.StoreName) == nil {
+				list = append(list, b)
+			}
+		}
+		middleware.JSONSuccess(w, http.StatusOK, list, nil)
+	})
+
 	r.Post("/auth/pin-login", func(w http.ResponseWriter, req *http.Request) {
 		var body PINLoginRequest
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -533,6 +588,12 @@ func (s *AuthService) MountRoutes(r chi.Router) {
 			return
 		}
 		res, err := s.PINLogin(req.Context(), body)
+		var locked *PINLockedError
+		if errors.As(err, &locked) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(locked.Wait.Seconds())+1))
+			middleware.JSONError(w, http.StatusTooManyRequests, "PIN_LOGIN_LOCKED", locked.Error(), nil)
+			return
+		}
 		if err != nil {
 			middleware.JSONError(w, http.StatusUnauthorized, "PIN_LOGIN_FAILED", err.Error(), nil)
 			return

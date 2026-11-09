@@ -4,7 +4,6 @@ import { useAuth } from '../../context/AuthContext';
 import { NumericKeypad } from '../../components/ui/NumericKeypad';
 import { ShoppingBag, KeyRound, Mail, Sparkles, ShieldCheck } from 'lucide-react';
 import { api } from '../../lib/api';
-import { Branch } from '../../types';
 import { homeForRole } from '../../lib/rbac';
 
 export const LoginView: React.FC = () => {
@@ -17,7 +16,8 @@ export const LoginView: React.FC = () => {
   const [password, setPassword] = useState<string>('cashier123');
 
   // PIN form
-  const [branches, setBranches] = useState<Branch[]>([]);
+  // Branches for the PIN tab, from the public list (works before anyone is logged in).
+  const [branches, setBranches] = useState<Array<{ id: string; name: string; store_name: string }>>([]);
   const [selectedBranchId, setSelectedBranchId] = useState<string>('');
   const [pin, setPin] = useState<string>('');
 
@@ -32,7 +32,7 @@ export const LoginView: React.FC = () => {
 
   useEffect(() => {
     api
-      .get('/branches')
+      .get('/auth/branches')
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
           setBranches(data);
@@ -198,10 +198,14 @@ export const LoginView: React.FC = () => {
               >
                 {branches.map((b) => (
                   <option key={b.id} value={b.id}>
-                    {b.name}
+                    {new Set(branches.map((x) => x.store_name)).size > 1 ? `${b.store_name} · ${b.name}` : b.name}
                   </option>
                 ))}
               </select>
+              {branches.length === 0 && (
+                <p className="mt-1 text-[11px] text-amber-700">No branches available. Log in with email instead.</p>
+              )}
+              <p className="mt-1 text-[11px] text-[#64748B]">PIN login is for cashiers and managers. Other staff log in with email.</p>
             </div>
 
             {/* PIN Dots indicator */}

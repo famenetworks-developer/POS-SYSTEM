@@ -183,6 +183,39 @@ func RefundBlocked(ctx context.Context, tx pgx.Tx, orderID, status string) strin
 	return refundBlocked(ctx, tx, orderID, status)
 }
 
+// Open (unpaid) sale statuses. Only these can be billed, cancelled or paid; a paid sale can
+// only be undone with a refund, which keeps the record and shows in reports.
+var openOrderStatuses = []string{"draft", "placed", "in_progress", "billed"}
+
+func isOpenOrderStatus(status string) bool {
+	for _, st := range openOrderStatuses {
+		if st == status {
+			return true
+		}
+	}
+	return false
+}
+
+// closedOrderMessage explains why a sale in a closed status cannot be changed.
+func closedOrderMessage(status string) string {
+	switch status {
+	case "paid":
+		return "This sale is already paid. Use a refund to undo it."
+	case "refunded":
+		return "This sale has been refunded and cannot be changed."
+	case "cancelled":
+		return "This sale has been cancelled."
+	}
+	return "This sale can no longer be changed (status: " + status + ")."
+}
+
+// orderStatus reports the sale's current status, so a refused change can say why.
+func (s *OrderService) orderStatus(ctx context.Context, restID, orderID string) (string, bool) {
+	var status string
+	err := s.pool.QueryRow(ctx, "SELECT status FROM orders WHERE id = $1 AND restaurant_id = $2", orderID, restID).Scan(&status)
+	return status, err == nil
+}
+
 // CouponError is a coupon problem the cashier can act on (expired, used up, minimum spend...).
 type CouponError struct{ Message string }
 
@@ -659,8 +692,8 @@ func (s *OrderService) Pay(ctx context.Context, restID, userID, orderID string, 
 		return nil, fmt.Errorf("order not found: %w", err)
 	}
 
-	if status == "paid" {
-		return nil, fmt.Errorf("order is already paid")
+	if !isOpenOrderStatus(status) {
+		return nil, &PaymentError{closedOrderMessage(status)}
 	}
 	// The customer pays the full amount due: no less, no more.
 	if err := validatePayments(ctx, tx, restID, req, totalMinor-paidMinor); err != nil {
@@ -1123,10 +1156,20 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 
 		var branchID string
 		var tableID *string
+		// Only an unpaid sale can be billed; a paid sale must never become payable again.
 		err := s.pool.QueryRow(req.Context(), `
-			UPDATE orders SET status = 'billed' WHERE id = $1 AND restaurant_id = $2
+			UPDATE orders SET status = 'billed'
+			WHERE id = $1 AND restaurant_id = $2 AND status = ANY($3)
 			RETURNING branch_id, table_id
-		`, orderID, restID).Scan(&branchID, &tableID)
+		`, orderID, restID, openOrderStatuses).Scan(&branchID, &tableID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			if status, found := s.orderStatus(req.Context(), restID, orderID); found {
+				middleware.JSONError(w, http.StatusConflict, "ORDER_CLOSED", closedOrderMessage(status), nil)
+			} else {
+				middleware.JSONError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "Sale not found", nil)
+			}
+			return
+		}
 		if err != nil {
 			middleware.JSONError(w, http.StatusBadRequest, "UPDATE_FAILED", err.Error(), nil)
 			return
@@ -1467,11 +1510,22 @@ func (s *OrderService) MountRoutes(r chi.Router) {
 		}
 		_ = json.NewDecoder(req.Body).Decode(&body)
 
-		_, err := s.pool.Exec(req.Context(), `
-			UPDATE orders SET status = 'cancelled' WHERE id = $1 AND restaurant_id = $2
-		`, orderID, restID)
+		// Only an unpaid sale can be cancelled. A paid sale is undone with a refund, so it stays
+		// on record, the stock comes back and reports show it.
+		tag, err := s.pool.Exec(req.Context(), `
+			UPDATE orders SET status = 'cancelled'
+			WHERE id = $1 AND restaurant_id = $2 AND status = ANY($3)
+		`, orderID, restID, openOrderStatuses)
 		if err != nil {
 			middleware.JSONError(w, http.StatusInternalServerError, "CANCEL_FAILED", err.Error(), nil)
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			if status, found := s.orderStatus(req.Context(), restID, orderID); found {
+				middleware.JSONError(w, http.StatusConflict, "ORDER_CLOSED", closedOrderMessage(status), nil)
+			} else {
+				middleware.JSONError(w, http.StatusNotFound, "ORDER_NOT_FOUND", "Sale not found", nil)
+			}
 			return
 		}
 

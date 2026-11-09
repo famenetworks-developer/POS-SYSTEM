@@ -107,13 +107,14 @@ They are created only when `SEED_DEMO_DATA=true`; Docker production defaults thi
 | Role | Email | Password | PIN |
 | --- | --- | --- | --- |
 | Super Admin | `admin@novamart.com` | `admin123` | — |
-| Store Owner | `owner@novamart.com` | `owner123` | `0000` |
+| Store Owner | `owner@novamart.com` | `owner123` | `9999` |
+| Tenant Admin | `tenantadmin@novamart.com` | `admin123` | — |
 | Branch Manager | `manager@novamart.com` | `manager123` | `1111` |
 | Lead Cashier | `cashier@novamart.com` | `cashier123` | `2222` |
-| Inventory Head | `inventory@novamart.com` | `inventory123` | `5555` |
-| Purchase Officer | `purchase@novamart.com` | `purchase123` | `6666` |
-| Chief Accountant | `accountant@novamart.com` | `accountant123` | `7777` |
-| Delivery Associate | `delivery@novamart.com` | `delivery123` | `8888` |
+| Inventory Head | `inventory@novamart.com` | `inventory123` | `3333` |
+| Purchase Officer | `purchase@novamart.com` | `purchase123` | `4444` |
+| Chief Accountant | `accountant@novamart.com` | `accountant123` | `5555` |
+| Delivery Associate | `delivery@novamart.com` | `delivery123` | `6666` |
 
 ## Production checklist
 

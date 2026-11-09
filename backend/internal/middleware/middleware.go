@@ -370,6 +370,8 @@ func GenerateTokens(userID, restaurantID, email, role string, discountLimit floa
 		Role:             role,
 		DiscountLimitPct: discountLimit,
 		RegisteredClaims: jwt.RegisteredClaims{
+			// A unique ID makes every token different, even two issued in the same second.
+			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},
@@ -386,6 +388,9 @@ func GenerateTokens(userID, restaurantID, email, role string, discountLimit floa
 		Role:             role,
 		DiscountLimitPct: discountLimit,
 		RegisteredClaims: jwt.RegisteredClaims{
+			// Unique per token: refresh tokens are stored and revoked by hash, so two refresh
+			// tokens issued in the same second must never be identical.
+			ID:        uuid.New().String(),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(30 * 24 * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		},

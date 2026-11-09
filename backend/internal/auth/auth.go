@@ -359,6 +359,16 @@ func (s *AuthService) PINLogin(ctx context.Context, req PINLoginRequest) (map[st
 		return nil, err
 	}
 
+	// Record the refresh token like email login does; without it the session cannot be
+	// renewed and the cashier is logged out when the 15-minute access token expires.
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+		VALUES ($1, $2, $3)
+	`, user.ID, hashString(refreshToken), time.Now().Add(30*24*time.Hour)); err != nil {
+		return nil, fmt.Errorf("could not start the session")
+	}
+	_, _ = s.pool.Exec(ctx, "UPDATE users SET last_login_at = NOW() WHERE id = $1", user.ID)
+
 	return map[string]interface{}{
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
